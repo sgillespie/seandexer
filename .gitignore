@@ -21,3 +21,13 @@ cabal.project.local
 cabal.project.local~
 .HTF/
 .ghc.environment.*
+
+# direnv
+.direnv
+.envrc
+
+# emacs
+.dir-locals
+
+# nix
+result
