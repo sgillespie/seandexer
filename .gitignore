@@ -27,7 +27,7 @@ cabal.project.local~
 .envrc
 
 # emacs
-.dir-locals
+.dir-locals.el
 
 # nix
 result
