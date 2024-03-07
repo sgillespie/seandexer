@@ -59,4 +59,5 @@
 
     allow-import-from-derivation = "true";
     experimental-features = ["nix-command flakes"];
+  };
 }
