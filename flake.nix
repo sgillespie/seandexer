@@ -18,7 +18,7 @@
         inputs.treefmt-nix.flakeModule
       ];
 
-      perSystem = { self', system, lib, config, pkgs, ...}: {
+      perSystem = { self', system, lib, config, pkgs, ... }: {
         haskellProjects.default = {
           projectFlakeName = "seandexer";
 
@@ -28,7 +28,7 @@
             tools = hsPkgs: {
               inherit (hsPkgs)
                 cabal-install fourmolu haskell-language-server hlint;
-              inherit (pkgs) nixpkgs-fmt;
+              inherit (pkgs) nixpkgs-fmt treefmt;
             };
           };
         };
@@ -58,6 +58,6 @@
     ];
 
     allow-import-from-derivation = "true";
-    experimental-features = ["nix-command flakes"];
+    experimental-features = [ "nix-command flakes" ];
   };
 }
