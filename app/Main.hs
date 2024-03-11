@@ -1,8 +1,28 @@
 module Main where
 
-import MyLib qualified (someFunc)
+import Options.Applicative
+
+data Opts = Opts
+  {socketPath :: FilePath}
+  deriving stock (Eq, Show)
 
 main :: IO ()
-main = do
-  putStrLn "Hello, Haskell!"
-  MyLib.someFunc
+main = run =<< execParser opts
+  where
+    opts = info (parseOpts <**> helper) fullDesc
+
+run :: Opts -> IO ()
+run _ =
+  putStrLn "Hello Word!"
+
+parseOpts :: Parser Opts
+parseOpts =
+  Opts <$> parseSocketPath
+
+parseSocketPath :: Parser FilePath
+parseSocketPath =
+  strOption $
+    long "socket-path"
+      <> short 's'
+      <> metavar "PATH"
+      <> help "Cardano Node socket path"

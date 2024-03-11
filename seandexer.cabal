@@ -9,14 +9,24 @@ maintainer: sean@mistersg.net
 build-type: Simple
 
 common common
-  ghc-options: -Wall
+  ghc-options:
+    -Wall
+    -Wmissing-deriving-strategies
   default-language: GHC2021
+  default-extensions:
+    DerivingStrategies
+  mixins:
+    base hiding (Prelude),
+    relude (Relude as Prelude),
+    relude
   build-depends:
-    base >=4.15 && <5
+    base >=4.15 && <5,
+    relude
 
 library
   import: common
-  exposed-modules: MyLib
+  exposed-modules:
+    Data.Cardano.Seandexer
   hs-source-dirs: src
   build-depends:
     base >=4.15 && <5
@@ -26,6 +36,7 @@ executable seandexer
   main-is: Main.hs
   hs-source-dirs: app
   build-depends:
+    optparse-applicative,
     seandexer
 
 test-suite seandexer-test
