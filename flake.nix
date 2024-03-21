@@ -57,7 +57,11 @@
           flake = pkgs.seandexer.flake {};
         in
           pkgs.lib.recursiveUpdate flake {
-            packages.default = flake.packages."seandexer:exe:seandexer";
+            # Attrs we want to add to the flake
+            packages = {
+              default = flake.packages."seandexer:exe:seandexer";
+              checks = flake.checks."seandexer:test:seandexer-test";
+            };
           });
 
   nixConfig = {
