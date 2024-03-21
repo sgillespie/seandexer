@@ -1,60 +1,76 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-parts.url = "github:hercules-ci/flake-parts";
-    haskell-flake.url = "github:srid/haskell-flake";
-    treefmt-nix = {
-      url = "github:numtide/treefmt-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
+    haskellNix.url = "github:input-output-hk/haskell.nix";
+    utils.url = "github:numtide/flake-utils";
+    nixpkgs.follows = "haskellNix/nixpkgs-unstable";
+    chap = {
+      url = "github:intersectmbo/cardano-haskell-packages?ref=repo";
+      flake = false;
     };
   };
 
-  outputs = inputs@{ self, nixpkgs, flake-parts, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = nixpkgs.lib.systems.flakeExposed;
+  outputs = inputs@{ self, nixpkgs, utils, haskellNix, ... }:
+    let
+      supportedSystems = ["x86_64-linux" "x86_64-darwin" "aarch64-darwin" "aarch64-linux"];
+    in
+      utils.lib.eachSystem supportedSystems (system:
+        let
+          overlays = [
+            haskellNix.overlay
 
-      imports = [
-        inputs.haskell-flake.flakeModule
-        inputs.treefmt-nix.flakeModule
-      ];
+            (final: prev: {
+              seandexer = final.haskell-nix.cabalProject' {
+                src = ./.;
+                compiler-nix-name = "ghc964";
 
-      perSystem = { self', system, lib, config, pkgs, ... }: {
-        haskellProjects.default = {
-          projectFlakeName = "seandexer";
+                # Add chap to input map, so we can find cardano packages
+                inputMap = {
+                  "https://chap.intersectmbo.org/" = inputs.chap;
+                };
 
-          devShell = {
-            enable = true;
+                shell = {
+                  # Tools from Hackage
+                  tools = {
+                    cabal = {};
+                    hlint = {};
+                    haskell-language-server = {};
+                    fourmolu = {};
+                  };
 
-            tools = hsPkgs: {
-              inherit (hsPkgs)
-                cabal-install fourmolu haskell-language-server hlint;
-              inherit (pkgs) nixpkgs-fmt treefmt;
-            };
+                  # Non-haskell tools
+                  buildInputs = with pkgs; [
+                    nixpkgs-fmt
+                    treefmt
+                  ];
+                };
+              };
+            })
+          ];
+
+          pkgs = import nixpkgs {
+            inherit system overlays;
+            inherit (haskellNix) config;
           };
-        };
 
-        treefmt.config = {
-          projectRootFile = "flake.nix";
-          programs = {
-            nixpkgs-fmt.enable = true;
-            fourmolu.enable = true;
-            hlint.enable = true;
-          };
-        };
+          inherit (pkgs) lib;
 
-        packages.default = self'.packages.seandexer;
-      };
-    };
+          flake = pkgs.seandexer.flake {};
+        in
+          pkgs.lib.recursiveUpdate flake {
+            packages.default = flake.packages."seandexer:exe:seandexer";
+          });
 
   nixConfig = {
     trusted-public-keys = [
       "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
       "sgillespie.cachix.org-1:Zgif/WHW2IzHqbMb1z56cMmV5tLAA+zW9d5iB5w/VU4="
+      "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="
     ];
 
     substituters = [
       "https://cache.nixos.org/"
       "https://sgillespie.cachix.org"
+      "https://cache.iog.io"
     ];
 
     allow-import-from-derivation = "true";

@@ -29,7 +29,8 @@ library
     Data.Cardano.Seandexer
   hs-source-dirs: src
   build-depends:
-    base >=4.15 && <5
+    base >=4.15 && <5,
+    cardano-client
 
 executable seandexer
   import: common
