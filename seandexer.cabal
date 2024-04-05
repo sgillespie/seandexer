@@ -14,7 +14,12 @@ common common
     -Wmissing-deriving-strategies
   default-language: GHC2021
   default-extensions:
+    DataKinds
     DerivingStrategies
+    OverloadedStrings
+    RecordWildCards
+  other-extensions:
+    QuantifiedConstraints
   mixins:
     base hiding (Prelude),
     relude (Relude as Prelude),
@@ -30,7 +35,18 @@ library
   hs-source-dirs: src
   build-depends:
     base >=4.15 && <5,
-    cardano-client
+    cardano-client,
+    cardano-ledger-byron,
+    cardano-ledger-core,
+    contra-tracer,
+    ouroboros-consensus,
+    ouroboros-consensus-cardano,
+    ouroboros-consensus-diffusion,
+    ouroboros-network-api,
+    ouroboros-network-framework,
+    ouroboros-consensus-protocol,
+    ouroboros-network,
+    typed-protocols
 
 executable seandexer
   import: common

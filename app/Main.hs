@@ -1,8 +1,10 @@
 module Main where
 
+import Data.Cardano.Seandexer (SeandexerOpts (..), runSeandexer)
+
 import Options.Applicative
 
-data Opts = Opts
+newtype Opts = Opts
   {socketPath :: FilePath}
   deriving stock (Eq, Show)
 
@@ -12,8 +14,12 @@ main = run =<< execParser opts
     opts = info (parseOpts <**> helper) fullDesc
 
 run :: Opts -> IO ()
-run _ =
-  putStrLn "Hello Word!"
+run = runSeandexer . toSeandexerOpts
+  where
+    toSeandexerOpts (Opts{..}) =
+      SeandexerOpts
+        { soSocketPath = socketPath
+        }
 
 parseOpts :: Parser Opts
 parseOpts =
