@@ -3,19 +3,22 @@
     haskellNix.url = "github:input-output-hk/haskell.nix";
     utils.url = "github:numtide/flake-utils";
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
+    iohkNix.url = "github:input-output-hk/iohk-nix";
+
     chap = {
       url = "github:intersectmbo/cardano-haskell-packages?ref=repo";
       flake = false;
     };
+
   };
 
-  outputs = inputs@{ self, nixpkgs, utils, haskellNix, ... }:
+  outputs = inputs@{ self, nixpkgs, utils, haskellNix, iohkNix, ... }:
     let
       supportedSystems = ["x86_64-linux" "x86_64-darwin" "aarch64-darwin" "aarch64-linux"];
     in
       utils.lib.eachSystem supportedSystems (system:
         let
-          overlays = [
+          overlays = builtins.attrValues (iohkNix.overlays) ++ [
             haskellNix.overlay
 
             (final: prev: {
@@ -33,8 +36,18 @@
                   tools = {
                     cabal = {};
                     hlint = {};
-                    haskell-language-server = {};
                     fourmolu = {};
+
+                    haskell-language-server = {
+                      src = inputs.haskellNix.inputs."hls-2.6";
+                      configureArgs = "--disable-benchmarks --disable-tests";
+                      modules = [{
+                        packages.ghcide.patches = [
+                          # https://github.com/haskell/haskell-language-server/issues/4046#issuecomment-1926242056
+                          ./nix/ghcide-workaround.diff
+                        ];
+                      }];
+                    };
                   };
 
                   # Non-haskell tools
