@@ -1,11 +1,13 @@
 module Main where
 
-import Data.Cardano.Seandexer (SeandexerOpts (..), runSeandexer)
+import Data.Cardano.Seandexer
 
 import Options.Applicative
 
-newtype Opts = Opts
-  {socketPath :: FilePath}
+data Opts = Opts
+  { socketPath :: FilePath,
+    networkId :: NetworkId
+  }
   deriving stock (Eq, Show)
 
 main :: IO ()
@@ -18,12 +20,13 @@ run = runSeandexer . toSeandexerOpts
   where
     toSeandexerOpts (Opts{..}) =
       SeandexerOpts
-        { soSocketPath = socketPath
+        { soSocketPath = socketPath,
+          soNetworkId = networkId
         }
 
 parseOpts :: Parser Opts
 parseOpts =
-  Opts <$> parseSocketPath
+  Opts <$> parseSocketPath <*> parseNetworkId
 
 parseSocketPath :: Parser FilePath
 parseSocketPath =
@@ -32,3 +35,18 @@ parseSocketPath =
       <> short 's'
       <> metavar "PATH"
       <> help "Cardano Node socket path"
+
+parseNetworkId :: Parser NetworkId
+parseNetworkId = parseMainnet <|> (mkTestnet <$> parseTestnetMagic)
+  where
+    parseMainnet =
+      flag' Mainnet $
+        long "mainnet"
+          <> short 'm'
+          <> help "Use the mainnet network magic ID"
+
+    parseTestnetMagic =
+      option auto $
+        long "testnet-magic"
+          <> short 't'
+          <> help "Use the specified testnet magic ID"

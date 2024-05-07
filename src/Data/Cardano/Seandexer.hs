@@ -2,7 +2,9 @@
 
 module Data.Cardano.Seandexer
   ( SeandexerOpts (..),
+    NetworkId (..),
     runSeandexer,
+    mkTestnet,
   ) where
 
 import Cardano.Chain.Epoch.File (mainnetEpochSlots)
@@ -29,8 +31,10 @@ import Ouroboros.Network.Mux qualified as Network
 import Ouroboros.Network.NodeToClient qualified as Network
 import Ouroboros.Network.Snocket (localAddressFromPath)
 
-newtype SeandexerOpts = SeandexerOpts
-  {soSocketPath :: FilePath}
+data SeandexerOpts = SeandexerOpts
+  { soSocketPath :: FilePath,
+    soNetworkId :: NetworkId
+  }
   deriving stock (Eq, Show)
 
 type BlockVersion = CardanoBlock StandardCrypto
@@ -57,7 +61,7 @@ runSeandexer SeandexerOpts{..} =
     void $
       subscribe
         (localSnocket' ioManager)
-        networkMagic
+        (networkMagic soNetworkId)
         nodeToClientVersions
         tracers
         (subscriptionParams soSocketPath)
@@ -66,8 +70,17 @@ runSeandexer SeandexerOpts{..} =
 localSnocket' :: Network.IOManager -> Network.LocalSnocket
 localSnocket' = Network.localSnocket
 
-networkMagic :: NetworkMagic
-networkMagic = NetworkMagic 764_824_073 -- Mainnet
+data NetworkId
+  = Mainnet
+  | Testnet NetworkMagic
+  deriving stock (Eq, Show)
+
+mkTestnet :: Word32 -> NetworkId
+mkTestnet = Testnet . NetworkMagic
+
+networkMagic :: NetworkId -> NetworkMagic
+networkMagic Mainnet = NetworkMagic 764824073
+networkMagic (Testnet m) = m
 
 nodeToClientVersions :: Map NodeToClientVersion (BlockNodeToClientVersion BlockVersion)
 nodeToClientVersions = supportedNodeToClientVersions (Proxy @BlockVersion)
