@@ -24,7 +24,7 @@
             (final: prev: {
               seandexer = final.haskell-nix.cabalProject' {
                 src = ./.;
-                compiler-nix-name = "ghc964";
+                compiler-nix-name = "ghc98";
 
                 # Add chap to input map, so we can find cardano packages
                 inputMap = {
@@ -39,14 +39,7 @@
                     fourmolu = {};
 
                     haskell-language-server = {
-                      src = inputs.haskellNix.inputs."hls-2.6";
-                      configureArgs = "--disable-benchmarks --disable-tests";
-                      modules = [{
-                        packages.ghcide.patches = [
-                          # https://github.com/haskell/haskell-language-server/issues/4046#issuecomment-1926242056
-                          ./nix/ghcide-workaround.diff
-                        ];
-                      }];
+                      src = inputs.haskellNix.inputs."hls-2.8";
                     };
                   };
 
