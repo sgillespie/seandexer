@@ -12,19 +12,10 @@ import Cardano.Client.Subscription hiding (NodeToClientProtocols ())
 import Cardano.Ledger.Crypto (StandardCrypto ())
 import Control.Tracer (contramapM, nullTracer, stdoutTracer)
 import Network.TypedProtocol.Codec (Codec ())
-import Network.TypedProtocol.Core
-  ( ClientHasAgency (),
-    Peer (),
-    PeerRole (..),
-    ServerHasAgency (..),
-  )
+import Network.TypedProtocol.Core qualified as Protocol
 import Ouroboros.Consensus.Cardano (CardanoBlock ())
 import Ouroboros.Consensus.Cardano.Node (protocolClientInfoCardano)
-import Ouroboros.Consensus.Network.NodeToClient
-  ( ClientCodecs (),
-    Codecs' (..),
-    clientCodecs,
-  )
+import Ouroboros.Consensus.Network.NodeToClient qualified as Client
 import Ouroboros.Consensus.Node.ErrorPolicy (consensusErrorPolicy)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..))
@@ -213,12 +204,12 @@ localTxMonitorProtocol' blockVersion clientVersion =
 
 mkInitiatorProtocolOnly
   :: ( Show failure,
-       forall (st' :: ps). Show (ClientHasAgency st'),
-       forall (st' :: ps). Show (ServerHasAgency st'),
+       forall (st' :: ps). Show (Protocol.ClientHasAgency st'),
+       forall (st' :: ps). Show (Protocol.ServerHasAgency st'),
        ShowProxy ps
      )
   => Codec ps failure IO LByteString
-  -> Peer ps pr st IO ()
+  -> Protocol.Peer ps pr st IO ()
   -> RunMiniProtocolWithMinimalCtx () Void
 mkInitiatorProtocolOnly codec peer =
   InitiatorProtocolOnly $
@@ -230,7 +221,7 @@ mkInitiatorProtocolOnly codec peer =
 codecs
   :: BlockNodeToClientVersion BlockVersion
   -> NodeToClientVersion
-  -> ClientCodecs BlockVersion IO
+  -> Client.ClientCodecs BlockVersion IO
 codecs = clientCodecs codecConfig
   where
     codecConfig = pClientInfoCodecConfig cfg
