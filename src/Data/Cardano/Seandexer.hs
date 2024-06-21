@@ -12,7 +12,12 @@ import Cardano.Client.Subscription hiding (NodeToClientProtocols ())
 import Cardano.Ledger.Crypto (StandardCrypto ())
 import Control.Tracer (contramapM, nullTracer, stdoutTracer)
 import Network.TypedProtocol.Codec (Codec ())
-import Network.TypedProtocol.Core (ClientHasAgency (), Peer (), ServerHasAgency (..))
+import Network.TypedProtocol.Core
+  ( ClientHasAgency (),
+    Peer (),
+    PeerRole (..),
+    ServerHasAgency (..),
+  )
 import Ouroboros.Consensus.Cardano (CardanoBlock ())
 import Ouroboros.Consensus.Cardano.Node (protocolClientInfoCardano)
 import Ouroboros.Consensus.Network.NodeToClient
@@ -26,9 +31,12 @@ import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..))
 import Ouroboros.Consensus.Protocol.Praos.Translate ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Util (ShowProxy ())
+import Ouroboros.Network.Block (Point (), Tip (..), genesisPoint)
 import Ouroboros.Network.Magic (NetworkMagic (..))
 import Ouroboros.Network.Mux qualified as Network
 import Ouroboros.Network.NodeToClient qualified as Network
+import Ouroboros.Network.Protocol.ChainSync.Client qualified as ChainSync
+import Ouroboros.Network.Protocol.ChainSync.Type (ChainSync (..))
 import Ouroboros.Network.Snocket (localAddressFromPath)
 
 data SeandexerOpts = SeandexerOpts
@@ -128,7 +136,50 @@ localChainSyncProtocol' blockVersion clientVersion =
   mkInitiatorProtocolOnly codec peer
   where
     codec = cChainSyncCodec (codecs blockVersion clientVersion)
-    peer = Network.chainSyncPeerNull
+    peer = mkChainSyncPeer
+
+mkChainSyncPeer
+  :: forall (header :: Type) (block :: Type) (tip :: Type) m a
+   . (MonadIO m, Monad m)
+  => Peer (ChainSync header (Point block) (Tip tip)) 'AsClient StIdle m a
+mkChainSyncPeer = ChainSync.chainSyncClientPeer (ChainSync.ChainSyncClient mkChainSyncClient)
+
+mkChainSyncClient
+  :: (MonadIO m, Monad m)
+  => m (ChainSync.ClientStIdle header (Point block) (Tip tip) m a)
+mkChainSyncClient =
+  pure $ ChainSync.SendMsgFindIntersect [genesisPoint] intersectState
+  where
+    intersectState
+      :: (MonadIO m, Monad m)
+      => ChainSync.ClientStIntersect header (Point block) (Tip tip) m a
+    intersectState =
+      ChainSync.ClientStIntersect
+        { recvMsgIntersectFound = const mkChainSyncClient',
+          recvMsgIntersectNotFound = mkChainSyncClient'
+        }
+
+mkChainSyncClient'
+  :: (MonadIO m, Monad m)
+  => Tip tip
+  -> ChainSync.ChainSyncClient header (Point block) (Tip tip) m a
+mkChainSyncClient' _ =
+  ChainSync.ChainSyncClient mkChainSyncClient''
+  where
+    mkChainSyncClient''
+      :: (MonadIO m, Monad m)
+      => m (ChainSync.ClientStIdle header (Point block) (Tip tip) m a)
+    mkChainSyncClient'' = do
+      pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+
+    mkClientStNext
+      :: (MonadIO m, Monad m)
+      => ChainSync.ClientStNext header (Point block) (Tip tip) m a
+    mkClientStNext =
+      ChainSync.ClientStNext
+        { recvMsgRollForward = const mkChainSyncClient',
+          recvMsgRollBackward = const mkChainSyncClient'
+        }
 
 localTxSubmissionProtocol'
   :: BlockNodeToClientVersion BlockVersion

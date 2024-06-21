@@ -39,11 +39,13 @@ library
     cardano-ledger-byron,
     cardano-ledger-core,
     contra-tracer,
+    io-classes,
     ouroboros-consensus,
     ouroboros-consensus-cardano,
     ouroboros-consensus-diffusion,
     ouroboros-network-api,
     ouroboros-network-framework,
+    ouroboros-network-protocols,
     ouroboros-consensus-protocol,
     ouroboros-network,
     typed-protocols
