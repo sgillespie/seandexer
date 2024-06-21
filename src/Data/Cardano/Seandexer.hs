@@ -148,38 +148,38 @@ mkChainSyncClient
   :: (MonadIO m, Monad m)
   => m (ChainSync.ClientStIdle header (Point block) (Tip tip) m a)
 mkChainSyncClient =
-  pure $ ChainSync.SendMsgFindIntersect [genesisPoint] intersectState
-  where
-    intersectState
-      :: (MonadIO m, Monad m)
-      => ChainSync.ClientStIntersect header (Point block) (Tip tip) m a
-    intersectState =
-      ChainSync.ClientStIntersect
-        { recvMsgIntersectFound = const mkChainSyncClient',
-          recvMsgIntersectNotFound = mkChainSyncClient'
-        }
+  pure $ ChainSync.SendMsgFindIntersect [genesisPoint] mkFindIntersectClient
+
+mkFindIntersectClient
+  :: (MonadIO m, Monad m)
+  => ChainSync.ClientStIntersect header (Point block) (Tip tip) m a
+mkFindIntersectClient =
+  ChainSync.ClientStIntersect
+    { recvMsgIntersectFound = const mkChainSyncClient',
+      recvMsgIntersectNotFound = mkChainSyncClient'
+    }
 
 mkChainSyncClient'
-  :: (MonadIO m, Monad m)
+  :: Monad m
   => Tip tip
   -> ChainSync.ChainSyncClient header (Point block) (Tip tip) m a
-mkChainSyncClient' _ =
-  ChainSync.ChainSyncClient mkChainSyncClient''
-  where
-    mkChainSyncClient''
-      :: (MonadIO m, Monad m)
-      => m (ChainSync.ClientStIdle header (Point block) (Tip tip) m a)
-    mkChainSyncClient'' = do
-      pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+mkChainSyncClient' tip = ChainSync.ChainSyncClient (mkRequestNextClient tip)
 
-    mkClientStNext
-      :: (MonadIO m, Monad m)
-      => ChainSync.ClientStNext header (Point block) (Tip tip) m a
-    mkClientStNext =
-      ChainSync.ClientStNext
-        { recvMsgRollForward = const mkChainSyncClient',
-          recvMsgRollBackward = const mkChainSyncClient'
-        }
+mkRequestNextClient
+  :: Monad m
+  => Tip tip
+  -> m (ChainSync.ClientStIdle header (Point block) (Tip tip) m a)
+mkRequestNextClient _ = do
+  pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+
+mkClientStNext
+  :: Monad m
+  => ChainSync.ClientStNext header (Point block) (Tip tip) m a
+mkClientStNext =
+  ChainSync.ClientStNext
+    { recvMsgRollForward = const mkChainSyncClient',
+      recvMsgRollBackward = const mkChainSyncClient'
+    }
 
 localTxSubmissionProtocol'
   :: BlockNodeToClientVersion BlockVersion
