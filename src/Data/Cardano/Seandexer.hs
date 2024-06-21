@@ -17,7 +17,7 @@ import Ouroboros.Consensus.Cardano (CardanoBlock ())
 import Ouroboros.Consensus.Cardano.Node (protocolClientInfoCardano)
 import Ouroboros.Consensus.Network.NodeToClient qualified as Client
 import Ouroboros.Consensus.Node.ErrorPolicy (consensusErrorPolicy)
-import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.NetworkProtocolVersion qualified as Consensus
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..))
 import Ouroboros.Consensus.Protocol.Praos.Translate ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
@@ -81,8 +81,11 @@ networkMagic :: NetworkId -> NetworkMagic
 networkMagic Mainnet = NetworkMagic 764824073
 networkMagic (Testnet m) = m
 
-nodeToClientVersions :: Map NodeToClientVersion (BlockNodeToClientVersion BlockVersion)
-nodeToClientVersions = supportedNodeToClientVersions (Proxy @BlockVersion)
+nodeToClientVersions
+  :: Map
+      Consensus.NodeToClientVersion
+      (Consensus.BlockNodeToClientVersion BlockVersion)
+nodeToClientVersions = Consensus.supportedNodeToClientVersions (Proxy @BlockVersion)
 
 tracers :: Network.NetworkClientSubcriptionTracers
 tracers =
@@ -108,8 +111,8 @@ subscriptionParams socketPath =
     }
 
 protocols
-  :: NodeToClientVersion
-  -> BlockNodeToClientVersion BlockVersion
+  :: Consensus.NodeToClientVersion
+  -> Consensus.BlockNodeToClientVersion BlockVersion
   -> NodeToClientProtocols () Void
 protocols clientVersion blockVersion =
   Network.NodeToClientProtocols
@@ -120,19 +123,24 @@ protocols clientVersion blockVersion =
     }
 
 localChainSyncProtocol'
-  :: BlockNodeToClientVersion BlockVersion
-  -> NodeToClientVersion
+  :: Consensus.BlockNodeToClientVersion BlockVersion
+  -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
 localChainSyncProtocol' blockVersion clientVersion =
   mkInitiatorProtocolOnly codec peer
   where
-    codec = cChainSyncCodec (codecs blockVersion clientVersion)
+    codec = Client.cChainSyncCodec (codecs blockVersion clientVersion)
     peer = mkChainSyncPeer
 
 mkChainSyncPeer
   :: forall (header :: Type) (block :: Type) (tip :: Type) m a
    . (MonadIO m, Monad m)
-  => Peer (ChainSync header (Point block) (Tip tip)) 'AsClient StIdle m a
+  => Protocol.Peer
+      (ChainSync header (Point block) (Tip tip))
+      'Protocol.AsClient
+      StIdle
+      m
+      a
 mkChainSyncPeer = ChainSync.chainSyncClientPeer (ChainSync.ChainSyncClient mkChainSyncClient)
 
 mkChainSyncClient
@@ -173,33 +181,33 @@ mkClientStNext =
     }
 
 localTxSubmissionProtocol'
-  :: BlockNodeToClientVersion BlockVersion
-  -> NodeToClientVersion
+  :: Consensus.BlockNodeToClientVersion BlockVersion
+  -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
 localTxSubmissionProtocol' blockVersion clientVersion =
   mkInitiatorProtocolOnly codec peer
   where
-    codec = cTxSubmissionCodec (codecs blockVersion clientVersion)
+    codec = Client.cTxSubmissionCodec (codecs blockVersion clientVersion)
     peer = Network.localTxSubmissionPeerNull
 
 localStateQueryProtocol'
-  :: BlockNodeToClientVersion BlockVersion
-  -> NodeToClientVersion
+  :: Consensus.BlockNodeToClientVersion BlockVersion
+  -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
 localStateQueryProtocol' blockVersion clientVersion =
   mkInitiatorProtocolOnly codec peer
   where
-    codec = cStateQueryCodec (codecs blockVersion clientVersion)
+    codec = Client.cStateQueryCodec (codecs blockVersion clientVersion)
     peer = Network.localStateQueryPeerNull
 
 localTxMonitorProtocol'
-  :: BlockNodeToClientVersion BlockVersion
-  -> NodeToClientVersion
+  :: Consensus.BlockNodeToClientVersion BlockVersion
+  -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
 localTxMonitorProtocol' blockVersion clientVersion =
   mkInitiatorProtocolOnly codec peer
   where
-    codec = cTxMonitorCodec (codecs blockVersion clientVersion)
+    codec = Client.cTxMonitorCodec (codecs blockVersion clientVersion)
     peer = Network.localTxMonitorPeerNull
 
 mkInitiatorProtocolOnly
@@ -219,10 +227,10 @@ mkInitiatorProtocolOnly codec peer =
     tracer = nullTracer
 
 codecs
-  :: BlockNodeToClientVersion BlockVersion
-  -> NodeToClientVersion
+  :: Consensus.BlockNodeToClientVersion BlockVersion
+  -> Consensus.NodeToClientVersion
   -> Client.ClientCodecs BlockVersion IO
-codecs = clientCodecs codecConfig
+codecs = Client.clientCodecs codecConfig
   where
     codecConfig = pClientInfoCodecConfig cfg
     cfg = protocolClientInfoCardano mainnetEpochSlots
