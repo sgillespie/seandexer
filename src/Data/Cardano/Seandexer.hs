@@ -11,24 +11,27 @@ import Cardano.Chain.Epoch.File (mainnetEpochSlots)
 import Cardano.Client.Subscription hiding (NodeToClientProtocols ())
 import Cardano.Ledger.Crypto (StandardCrypto ())
 import Control.Tracer (contramapM, nullTracer, stdoutTracer)
+import Data.Text.IO qualified as Text
 import Network.TypedProtocol.Codec (Codec ())
 import Network.TypedProtocol.Core qualified as Protocol
+import Ouroboros.Consensus.Block (withOrigin)
 import Ouroboros.Consensus.Cardano (CardanoBlock ())
 import Ouroboros.Consensus.Cardano.Node (protocolClientInfoCardano)
 import Ouroboros.Consensus.Network.NodeToClient qualified as Client
 import Ouroboros.Consensus.Node.ErrorPolicy (consensusErrorPolicy)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion qualified as Consensus
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..))
-import Ouroboros.Consensus.Protocol.Praos.Translate ()
+import Ouroboros.Consensus.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Util (ShowProxy ())
-import Ouroboros.Network.Block (Point (), Tip (..), genesisPoint)
+import Ouroboros.Network.Block qualified as Block
 import Ouroboros.Network.Magic (NetworkMagic (..))
 import Ouroboros.Network.Mux qualified as Network
 import Ouroboros.Network.NodeToClient qualified as Network
 import Ouroboros.Network.Protocol.ChainSync.Client qualified as ChainSync
 import Ouroboros.Network.Protocol.ChainSync.Type (ChainSync (..))
 import Ouroboros.Network.Snocket (localAddressFromPath)
+import System.Exit (ExitCode)
 
 data SeandexerOpts = SeandexerOpts
   { soSocketPath :: FilePath,
@@ -36,7 +39,7 @@ data SeandexerOpts = SeandexerOpts
   }
   deriving stock (Eq, Show)
 
-type BlockVersion = CardanoBlock StandardCrypto
+type StandardBlock = CardanoBlock StandardCrypto
 
 type NodeToClientProtocols =
   Network.NodeToClientProtocols
@@ -84,8 +87,8 @@ networkMagic (Testnet m) = m
 nodeToClientVersions
   :: Map
       Consensus.NodeToClientVersion
-      (Consensus.BlockNodeToClientVersion BlockVersion)
-nodeToClientVersions = Consensus.supportedNodeToClientVersions (Proxy @BlockVersion)
+      (Consensus.BlockNodeToClientVersion StandardBlock)
+nodeToClientVersions = Consensus.supportedNodeToClientVersions (Proxy @StandardBlock)
 
 tracers :: Network.NetworkClientSubcriptionTracers
 tracers =
@@ -96,7 +99,7 @@ tracers =
       nsSubscriptionTracer = subscriptionTracer
     }
   where
-    muxTracer = contramapM (pure . ("[MuxTracer] " <>) . show) stdoutTracer
+    muxTracer = nullTracer
     handshakeTracer = contramapM (pure . ("[HandshakeTracer] " <>) . show) stdoutTracer
     errorPolicyTracer = contramapM (pure . ("[ErrorPolicyTracer] " <>) . show) stdoutTracer
     subscriptionTracer = contramapM (pure . ("[SubscriptionTracer] " <>) . show) stdoutTracer
@@ -107,12 +110,19 @@ subscriptionParams socketPath =
     { cspAddress = localAddressFromPath socketPath,
       cspConnectionAttemptDelay = Nothing,
       cspErrorPolicies =
-        Network.networkErrorPolicies <> consensusErrorPolicy (Proxy @BlockVersion)
+        Network.networkErrorPolicies
+          <> consensusErrorPolicy (Proxy @StandardBlock)
+          <> Network.ErrorPolicies
+            { epAppErrorPolicies =
+                [ Network.ErrorPolicy $ \(_ :: ExitCode) -> Just Network.Throw
+                ],
+              epConErrorPolicies = []
+            }
     }
 
 protocols
   :: Consensus.NodeToClientVersion
-  -> Consensus.BlockNodeToClientVersion BlockVersion
+  -> Consensus.BlockNodeToClientVersion StandardBlock
   -> NodeToClientProtocols () Void
 protocols clientVersion blockVersion =
   Network.NodeToClientProtocols
@@ -123,7 +133,7 @@ protocols clientVersion blockVersion =
     }
 
 localChainSyncProtocol'
-  :: Consensus.BlockNodeToClientVersion BlockVersion
+  :: Consensus.BlockNodeToClientVersion StandardBlock
   -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
 localChainSyncProtocol' blockVersion clientVersion =
@@ -133,55 +143,169 @@ localChainSyncProtocol' blockVersion clientVersion =
     peer = mkChainSyncPeer
 
 mkChainSyncPeer
-  :: forall (header :: Type) (block :: Type) (tip :: Type) m a
-   . (MonadIO m, Monad m)
+  :: (MonadIO m, Monad m)
   => Protocol.Peer
-      (ChainSync header (Point block) (Tip tip))
+      (ChainSync StandardBlock (Block.Point StandardBlock) (Block.Tip StandardBlock))
       'Protocol.AsClient
       StIdle
       m
-      a
+      ()
 mkChainSyncPeer = ChainSync.chainSyncClientPeer (ChainSync.ChainSyncClient mkChainSyncClient)
 
 mkChainSyncClient
   :: (MonadIO m, Monad m)
-  => m (ChainSync.ClientStIdle header (Point block) (Tip tip) m a)
+  => m
+      ( ChainSync.ClientStIdle
+          StandardBlock
+          (Block.Point StandardBlock)
+          (Block.Tip StandardBlock)
+          m
+          ()
+      )
 mkChainSyncClient =
-  pure $ ChainSync.SendMsgFindIntersect [genesisPoint] mkFindIntersectClient
+  pure $ ChainSync.SendMsgFindIntersect [Block.genesisPoint] mkFindIntersectClient
 
 mkFindIntersectClient
   :: (MonadIO m, Monad m)
-  => ChainSync.ClientStIntersect header (Point block) (Tip tip) m a
+  => ChainSync.ClientStIntersect
+      StandardBlock
+      (Block.Point StandardBlock)
+      (Block.Tip StandardBlock)
+      m
+      ()
 mkFindIntersectClient =
   ChainSync.ClientStIntersect
-    { recvMsgIntersectFound = const mkChainSyncClient',
-      recvMsgIntersectNotFound = mkChainSyncClient'
+    { recvMsgIntersectFound = intersectFound,
+      recvMsgIntersectNotFound = intersectNotFound
     }
+  where
+    intersectFound
+      :: MonadIO m
+      => Block.Point StandardBlock
+      -> Block.Tip StandardBlock
+      -> ChainSync.ChainSyncClient
+          StandardBlock
+          (Block.Point StandardBlock)
+          (Block.Tip StandardBlock)
+          m
+          ()
+    intersectFound point tip =
+      ChainSync.ChainSyncClient $ mkRequestNextClient (Just point) tip
 
-mkChainSyncClient'
-  :: Monad m
-  => Tip tip
-  -> ChainSync.ChainSyncClient header (Point block) (Tip tip) m a
-mkChainSyncClient' tip = ChainSync.ChainSyncClient (mkRequestNextClient tip)
+    intersectNotFound
+      :: MonadIO m
+      => Block.Tip StandardBlock
+      -> ChainSync.ChainSyncClient
+          StandardBlock
+          (Block.Point StandardBlock)
+          (Block.Tip StandardBlock)
+          m
+          ()
+    intersectNotFound serverTip = ChainSync.ChainSyncClient (mkRequestNextClient Nothing serverTip)
 
-mkRequestNextClient
-  :: Monad m
-  => Tip tip
-  -> m (ChainSync.ClientStIdle header (Point block) (Tip tip) m a)
-mkRequestNextClient _ = do
-  pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+    mkRequestNextClient
+      :: MonadIO m
+      => Maybe (Block.Point StandardBlock)
+      -> Block.Tip StandardBlock
+      -> m
+          ( ChainSync.ClientStIdle
+              StandardBlock
+              (Block.Point StandardBlock)
+              (Block.Tip StandardBlock)
+              m
+              ()
+          )
+    mkRequestNextClient clientPoint serverTip = do
+      let tip' = Block.getTipBlockNo serverTip
+
+      liftIO . Text.putStrLn $
+        case clientPoint of
+          Just point' ->
+            "Found intersection at point: " <> show point' <> ", tip: " <> show tip'
+          Nothing ->
+            "No intersection found at tip: " <> show tip'
+
+      pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
 
 mkClientStNext
-  :: Monad m
-  => ChainSync.ClientStNext header (Point block) (Tip tip) m a
+  :: MonadIO m
+  => ChainSync.ClientStNext
+      StandardBlock
+      (Block.Point StandardBlock)
+      (Block.Tip StandardBlock)
+      m
+      ()
 mkClientStNext =
   ChainSync.ClientStNext
-    { recvMsgRollForward = const mkChainSyncClient',
-      recvMsgRollBackward = const mkChainSyncClient'
+    { recvMsgRollForward = rollForward,
+      recvMsgRollBackward = rollBackward
     }
+  where
+    rollForward
+      :: MonadIO m
+      => StandardBlock
+      -> Block.Tip StandardBlock
+      -> ChainSync.ChainSyncClient
+          StandardBlock
+          (Block.Point StandardBlock)
+          (Block.Tip StandardBlock)
+          m
+          ()
+    rollForward clientTip serverTip =
+      ChainSync.ChainSyncClient $ mkRequestNextClient (Left clientTip) serverTip
+
+    rollBackward
+      :: MonadIO m
+      => Block.Point StandardBlock
+      -> Block.Tip StandardBlock
+      -> ChainSync.ChainSyncClient
+          StandardBlock
+          (Block.Point StandardBlock)
+          (Block.Tip StandardBlock)
+          m
+          ()
+    rollBackward clientPoint serverTip =
+      ChainSync.ChainSyncClient $ mkRequestNextClient (Right clientPoint) serverTip
+
+    mkRequestNextClient
+      :: MonadIO m
+      => Either StandardBlock (Block.Point StandardBlock)
+      -> Block.Tip StandardBlock
+      -> m
+          ( ChainSync.ClientStIdle
+              StandardBlock
+              (Block.Point StandardBlock)
+              (Block.Tip StandardBlock)
+              m
+              ()
+          )
+    mkRequestNextClient clientTip serverTip =
+      case clientTip of
+        Left block -> do
+          let blockNo' = getBlockNo block
+
+          if blockNo' >= tip'
+            then do
+              liftIO . Text.putStrLn $ "Reached final block: " <> show blockNo'
+              exitSuccess
+            else
+              pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+        Right point -> do
+          reportRollback point
+          pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+      where
+        tip' = withOrigin 0 Block.unBlockNo (Block.getTipBlockNo serverTip)
+
+        getBlockNo block =
+          case Block.getHeaderFields block of
+            Block.HeaderFields _ blockNo' _ -> Block.unBlockNo blockNo'
+
+        reportRollback point =
+          liftIO . Text.putStrLn $
+            "Rolling backward at point: " <> show point <> ", tip: " <> show tip'
 
 localTxSubmissionProtocol'
-  :: Consensus.BlockNodeToClientVersion BlockVersion
+  :: Consensus.BlockNodeToClientVersion StandardBlock
   -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
 localTxSubmissionProtocol' blockVersion clientVersion =
@@ -191,7 +315,7 @@ localTxSubmissionProtocol' blockVersion clientVersion =
     peer = Network.localTxSubmissionPeerNull
 
 localStateQueryProtocol'
-  :: Consensus.BlockNodeToClientVersion BlockVersion
+  :: Consensus.BlockNodeToClientVersion StandardBlock
   -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
 localStateQueryProtocol' blockVersion clientVersion =
@@ -201,7 +325,7 @@ localStateQueryProtocol' blockVersion clientVersion =
     peer = Network.localStateQueryPeerNull
 
 localTxMonitorProtocol'
-  :: Consensus.BlockNodeToClientVersion BlockVersion
+  :: Consensus.BlockNodeToClientVersion StandardBlock
   -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
 localTxMonitorProtocol' blockVersion clientVersion =
@@ -217,8 +341,8 @@ mkInitiatorProtocolOnly
        ShowProxy ps
      )
   => Codec ps failure IO LByteString
-  -> Protocol.Peer ps pr st IO ()
-  -> RunMiniProtocolWithMinimalCtx () Void
+  -> Protocol.Peer ps pr st IO a
+  -> RunMiniProtocolWithMinimalCtx a Void
 mkInitiatorProtocolOnly codec peer =
   InitiatorProtocolOnly $
     Network.mkMiniProtocolCbFromPeer $
@@ -227,9 +351,9 @@ mkInitiatorProtocolOnly codec peer =
     tracer = nullTracer
 
 codecs
-  :: Consensus.BlockNodeToClientVersion BlockVersion
+  :: Consensus.BlockNodeToClientVersion StandardBlock
   -> Consensus.NodeToClientVersion
-  -> Client.ClientCodecs BlockVersion IO
+  -> Client.ClientCodecs StandardBlock IO
 codecs = Client.clientCodecs codecConfig
   where
     codecConfig = pClientInfoCodecConfig cfg
