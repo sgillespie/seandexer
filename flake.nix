@@ -49,6 +49,11 @@
                     treefmt
                   ];
                 };
+
+                modules = [{
+                  enableLibraryProfiling = true;
+                  enableProfiling = true;
+                }];
               };
             })
           ];
