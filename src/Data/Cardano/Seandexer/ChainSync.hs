@@ -9,11 +9,12 @@ module Data.Cardano.Seandexer.ChainSync
     subscribe,
   ) where
 
+import Data.Cardano.Seandexer.AppT (AppEnv (..), AppT (), runAppT)
+
 import Cardano.Chain.Epoch.File (mainnetEpochSlots)
 import Cardano.Client.Subscription qualified as Subscription
 import Cardano.Ledger.Crypto (StandardCrypto ())
-import Control.Tracer (contramapM, nullTracer, stdoutTracer)
-import Data.Text.IO qualified as Text
+import Control.Tracer (Tracer (..), contramapM, nullTracer)
 import Network.TypedProtocol.Codec (Codec ())
 import Network.TypedProtocol.Core qualified as Protocol
 import Ouroboros.Consensus.Block (withOrigin)
@@ -61,21 +62,27 @@ type RunMiniProtocolWithMinimalCtx a b =
     a
     b
 
+-- | Unix socket address
 newtype SocketPath = SocketPath {unSocketPath :: FilePath}
   deriving stock (Eq, Show)
 
+-- | Subscribe to a Cardano node with the `node-to-client` mini-protocol.
 subscribe
-  :: NetworkMagic
+  :: MonadIO io
+  => NetworkMagic
   -> SocketPath
-  -> IO Void
-subscribe networkMagic (SocketPath socketPath) = Network.withIOManager $ \ioManager -> do
-  Subscription.subscribe
-    (Network.localSnocket ioManager)
-    networkMagic
-    nodeToClientVersions
-    tracers
-    (subscriptionParams socketPath)
-    protocols
+  -> AppT io Void
+subscribe networkMagic (SocketPath socketPath) = do
+  env <- ask
+
+  liftIO . Network.withIOManager $ \ioManager ->
+    Subscription.subscribe
+      (Network.localSnocket ioManager)
+      networkMagic
+      nodeToClientVersions
+      (tracers env)
+      (subscriptionParams socketPath)
+      (protocols env)
 
 nodeToClientVersions
   :: Map
@@ -83,8 +90,8 @@ nodeToClientVersions
       (Consensus.BlockNodeToClientVersion StandardBlock)
 nodeToClientVersions = Consensus.supportedNodeToClientVersions (Proxy @StandardBlock)
 
-tracers :: Network.NetworkClientSubcriptionTracers
-tracers =
+tracers :: AppEnv -> Network.NetworkClientSubcriptionTracers
+tracers AppEnv{envStdOutTracer = stdoutTracer} =
   Network.NetworkSubscriptionTracers
     { nsMuxTracer = muxTracer,
       nsHandshakeTracer = handshakeTracer,
@@ -114,40 +121,46 @@ subscriptionParams socketPath =
     }
 
 protocols
-  :: Consensus.NodeToClientVersion
+  :: AppEnv
+  -> Consensus.NodeToClientVersion
   -> Consensus.BlockNodeToClientVersion StandardBlock
   -> NodeToClientProtocols () Void
-protocols clientVersion blockVersion =
+protocols env clientVersion blockVersion =
   Network.NodeToClientProtocols
-    { localChainSyncProtocol = localChainSyncProtocol' blockVersion clientVersion,
+    { localChainSyncProtocol = localChainSyncProtocol' env blockVersion clientVersion,
       localTxSubmissionProtocol = localTxSubmissionProtocol' blockVersion clientVersion,
       localStateQueryProtocol = localStateQueryProtocol' blockVersion clientVersion,
       localTxMonitorProtocol = localTxMonitorProtocol' blockVersion clientVersion
     }
 
 localChainSyncProtocol'
-  :: Consensus.BlockNodeToClientVersion StandardBlock
+  :: AppEnv
+  -> Consensus.BlockNodeToClientVersion StandardBlock
   -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
-localChainSyncProtocol' blockVersion clientVersion =
+localChainSyncProtocol' env blockVersion clientVersion =
   mkInitiatorProtocolOnly codec peer
   where
     codec = Client.cChainSyncCodec (codecs blockVersion clientVersion)
-    peer = mkChainSyncPeer
+    peer = mkChainSyncPeer env
 
 mkChainSyncPeer
   :: (MonadIO m, Monad m)
-  => Protocol.Peer
+  => AppEnv
+  -> Protocol.Peer
       (ChainSync StandardBlock (Block.Point StandardBlock) (Block.Tip StandardBlock))
       'Protocol.AsClient
       StIdle
       m
       ()
-mkChainSyncPeer = ChainSync.chainSyncClientPeer (ChainSync.ChainSyncClient mkChainSyncClient)
+mkChainSyncPeer env =
+  ChainSync.chainSyncClientPeer $
+    ChainSync.ChainSyncClient (mkChainSyncClient env)
 
 mkChainSyncClient
   :: (MonadIO m, Monad m)
-  => m
+  => AppEnv
+  -> m
       ( ChainSync.ClientStIdle
           StandardBlock
           (Block.Point StandardBlock)
@@ -155,18 +168,19 @@ mkChainSyncClient
           m
           ()
       )
-mkChainSyncClient =
-  pure $ ChainSync.SendMsgFindIntersect [Block.genesisPoint] mkFindIntersectClient
+mkChainSyncClient env =
+  pure $ ChainSync.SendMsgFindIntersect [Block.genesisPoint] (mkFindIntersectClient env)
 
 mkFindIntersectClient
   :: (MonadIO m, Monad m)
-  => ChainSync.ClientStIntersect
+  => AppEnv
+  -> ChainSync.ClientStIntersect
       StandardBlock
       (Block.Point StandardBlock)
       (Block.Tip StandardBlock)
       m
       ()
-mkFindIntersectClient =
+mkFindIntersectClient env =
   ChainSync.ClientStIntersect
     { recvMsgIntersectFound = intersectFound,
       recvMsgIntersectNotFound = intersectNotFound
@@ -210,25 +224,26 @@ mkFindIntersectClient =
           )
     mkRequestNextClient clientPoint serverTip = do
       let tip' = Block.getTipBlockNo serverTip
+          trace' = liftIO . runTracer (envStdOutTracer env)
 
-      liftIO . Text.putStrLn $
-        case clientPoint of
-          Just point' ->
-            "Found intersection at point: " <> show point' <> ", tip: " <> show tip'
-          Nothing ->
-            "No intersection found at tip: " <> show tip'
+      case clientPoint of
+        Just point' ->
+          trace' $ "Found intersection at point: " <> show point' <> ", tip: " <> show tip'
+        Nothing ->
+          trace' $ "No intersection found at tip: " <> show tip'
 
-      pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+      pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext env)
 
 mkClientStNext
   :: MonadIO m
-  => ChainSync.ClientStNext
+  => AppEnv
+  -> ChainSync.ClientStNext
       StandardBlock
       (Block.Point StandardBlock)
       (Block.Tip StandardBlock)
       m
       ()
-mkClientStNext =
+mkClientStNext env =
   ChainSync.ClientStNext
     { recvMsgRollForward = rollForward,
       recvMsgRollBackward = rollBackward
@@ -275,18 +290,18 @@ mkClientStNext =
     mkRequestNextClient clientTip serverTip =
       case clientTip of
         Left block -> do
-          processBlock serverTip block
+          runAppT env $ processBlock serverTip block
 
-          pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+          pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext env)
         Right point -> do
           reportRollback point
-          pure $ ChainSync.SendMsgRequestNext (pure ()) mkClientStNext
+          pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext env)
       where
         tip' = withOrigin 0 Block.unBlockNo (Block.getTipBlockNo serverTip)
+        trace' = liftIO . runTracer (envStdOutTracer env)
 
         reportRollback point =
-          liftIO . Text.putStrLn $
-            "Rolling backward at point: " <> show point <> ", tip: " <> show tip'
+          trace' $ "Rolling backward at point: " <> show point <> ", tip: " <> show tip'
 
 localTxSubmissionProtocol'
   :: Consensus.BlockNodeToClientVersion StandardBlock
@@ -343,13 +358,26 @@ codecs = Client.clientCodecs codecConfig
     codecConfig = pClientInfoCodecConfig cfg
     cfg = protocolClientInfoCardano mainnetEpochSlots
 
-processBlock :: MonadIO m => StandardTip -> StandardBlock -> m ()
+processBlock :: MonadIO m => StandardTip -> StandardBlock -> AppT m ()
 processBlock serverTip clientTip = do
+  trace' <- asks (runTracer . envStdOutTracer)
+  progress <- asks (runTracer . envProgressTracer)
+
   let blockNo' = getBlockNo clientTip
       tip' = withOrigin 0 Block.unBlockNo (Block.getTipBlockNo serverTip)
 
+  when (blockNo' `mod` 10000 == 0) $
+    liftIO . progress $
+      "Progress: "
+        <> show (blockNo' * 100 `div` tip')
+        <> "% (block "
+        <> show blockNo'
+        <> " / "
+        <> show tip'
+        <> ")"
+
   when (blockNo' >= tip') $ do
-    liftIO . Text.putStrLn $ "Reached final block: " <> show blockNo'
+    liftIO . trace' $ "Reached final block: " <> show blockNo'
     exitSuccess
   where
     getBlockNo block =

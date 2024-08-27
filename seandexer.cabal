@@ -32,6 +32,7 @@ library
   import: common
   exposed-modules:
     Data.Cardano.Seandexer
+    Data.Cardano.Seandexer.AppT
     Data.Cardano.Seandexer.ChainSync
   hs-source-dirs: src
   build-depends:
@@ -39,6 +40,7 @@ library
     cardano-client,
     cardano-ledger-byron,
     cardano-ledger-core,
+    concurrent-output,
     contra-tracer,
     io-classes,
     ouroboros-consensus,
