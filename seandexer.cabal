@@ -34,6 +34,7 @@ library
     Data.Cardano.Seandexer
     Data.Cardano.Seandexer.AppT
     Data.Cardano.Seandexer.ChainSync
+    Data.Cardano.Seandexer.Config
   hs-source-dirs: src
   build-depends:
     base >=4.15 && <5,
