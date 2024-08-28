@@ -37,11 +37,19 @@ library
   hs-source-dirs: src
   build-depends:
     base >=4.15 && <5,
+    aeson,
     cardano-client,
+    cardano-crypto-class,
+    cardano-crypto-wrapper,
+    cardano-ledger-alonzo,
+    cardano-ledger-api,
     cardano-ledger-byron,
+    cardano-ledger-conway,
     cardano-ledger-core,
+    cardano-ledger-shelley,
     concurrent-output,
     contra-tracer,
+    mtl,
     io-classes,
     ouroboros-consensus,
     ouroboros-consensus-cardano,
@@ -51,6 +59,7 @@ library
     ouroboros-network-protocols,
     ouroboros-consensus-protocol,
     ouroboros-network,
+    stm,
     typed-protocols
 
 executable seandexer

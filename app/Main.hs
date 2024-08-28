@@ -6,7 +6,11 @@ import Options.Applicative
 
 data Opts = Opts
   { socketPath :: FilePath,
-    networkId :: NetworkId
+    networkId :: NetworkId,
+    byronGenesis :: FilePath,
+    shelleyGenesis :: FilePath,
+    alonzoGenesis :: FilePath,
+    conwayGenesis :: FilePath
   }
   deriving stock (Eq, Show)
 
@@ -21,12 +25,22 @@ run = runSeandexer . toSeandexerOpts
     toSeandexerOpts (Opts{..}) =
       SeandexerOpts
         { soSocketPath = socketPath,
-          soNetworkId = networkId
+          soNetworkId = networkId,
+          soByronGenesis = byronGenesis,
+          soShelleyGenesis = shelleyGenesis,
+          soAlonzoGenesis = alonzoGenesis,
+          soConwayGenesis = conwayGenesis
         }
 
 parseOpts :: Parser Opts
 parseOpts =
-  Opts <$> parseSocketPath <*> parseNetworkId
+  Opts
+    <$> parseSocketPath
+    <*> parseNetworkId
+    <*> parseByronGenesis
+    <*> parseShelleyGenesis
+    <*> parseAlonzoGenesis
+    <*> parseConwayGenesis
 
 parseSocketPath :: Parser FilePath
 parseSocketPath =
@@ -50,3 +64,35 @@ parseNetworkId = parseMainnet <|> (mkTestnet <$> parseTestnetMagic)
         long "testnet-magic"
           <> short 't'
           <> help "Use the specified testnet magic ID"
+
+parseByronGenesis :: Parser FilePath
+parseByronGenesis =
+  strOption $
+    long "byron-genesis"
+      <> short 'b'
+      <> metavar "PATH"
+      <> help "Byron Genesis file path"
+
+parseShelleyGenesis :: Parser FilePath
+parseShelleyGenesis =
+  strOption $
+    long "shelley-genesis"
+      <> short 'g'
+      <> metavar "PATH"
+      <> help "Shelley Genesis file path"
+
+parseAlonzoGenesis :: Parser FilePath
+parseAlonzoGenesis =
+  strOption $
+    long "alonzo-genesis"
+      <> short 'a'
+      <> metavar "PATH"
+      <> help "Alonzo Genesis file path"
+
+parseConwayGenesis :: Parser FilePath
+parseConwayGenesis =
+  strOption $
+    long "conway-genesis"
+      <> short 'c'
+      <> metavar "PATH"
+      <> help "Conway Genesis file path"

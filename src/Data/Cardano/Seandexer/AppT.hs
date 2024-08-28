@@ -1,11 +1,18 @@
 module Data.Cardano.Seandexer.AppT
   ( AppT (..),
     AppEnv (..),
+    StandardBlock (),
+    StandardTip (),
+    StandardLedgerState (),
     mkAppEnv,
     runAppT,
   ) where
 
 import Control.Tracer (Tracer (..))
+import Ouroboros.Consensus.Cardano.Block (CardanoBlock (), StandardCrypto ())
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Network.Block (Tip ())
 import System.Console.Concurrent (outputConcurrent)
 import System.Console.Regions (ConsoleRegion ())
 import System.Console.Regions qualified as Console
@@ -22,17 +29,29 @@ newtype AppT m a = AppT
 
 data AppEnv = AppEnv
   { envProgressTracer :: Tracer IO Text,
-    envStdOutTracer :: Tracer IO Text
+    envStdOutTracer :: Tracer IO Text,
+    envLedgerState :: TVar StandardLedgerState
   }
 
-mkAppEnv :: ConsoleRegion -> IO AppEnv
-mkAppEnv region = do
+-- | A Cardano block, applied to @StandardCrypto@
+type StandardBlock = CardanoBlock StandardCrypto
+
+-- | Tip of the server's chain, applied to @StandardBlock@
+type StandardTip = Tip StandardBlock
+
+-- | Extended ledger state, applied to @StandardBlock@
+type StandardLedgerState = ExtLedgerState StandardBlock
+
+mkAppEnv :: ProtocolInfo StandardBlock -> ConsoleRegion -> IO AppEnv
+mkAppEnv protoInfo region = do
   progressTracer <- consoleRegionTracer region
+  ledgerState <- newTVarIO (pInfoInitLedger protoInfo)
 
   pure $
     AppEnv
       { envProgressTracer = progressTracer,
-        envStdOutTracer = outputConcurrentTracer
+        envStdOutTracer = outputConcurrentTracer,
+        envLedgerState = ledgerState
       }
 
 consoleRegionTracer :: ConsoleRegion -> IO (Tracer IO Text)

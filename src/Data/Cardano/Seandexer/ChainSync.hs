@@ -6,21 +6,35 @@ module Data.Cardano.Seandexer.ChainSync
     RunMiniProtocolWithMinimalCtx (),
     SocketPath (..),
     StandardTip (),
+    ShelleyGenesisHash (),
     subscribe,
+    protocolInfo,
   ) where
 
-import Data.Cardano.Seandexer.AppT (AppEnv (..), AppT (), runAppT)
+import Data.Cardano.Seandexer.AppT
 
 import Cardano.Chain.Epoch.File (mainnetEpochSlots)
+import Cardano.Chain.Genesis (Config ())
+import Cardano.Chain.Update qualified as Byron
 import Cardano.Client.Subscription qualified as Subscription
+import Cardano.Crypto.Hash (Blake2b_256 (), Hash ())
+import Cardano.Crypto.Hash.Class (castHash)
+import Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis ())
+import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
+import Cardano.Ledger.BaseTypes (Nonce (..), ProtVer (..), natVersion)
+import Cardano.Ledger.Conway.Genesis (ConwayGenesis ())
 import Cardano.Ledger.Crypto (StandardCrypto ())
+import Cardano.Ledger.Shelley.Genesis (ShelleyGenesis ())
 import Control.Tracer (Tracer (..), contramapM, nullTracer)
 import Network.TypedProtocol.Codec (Codec ())
 import Network.TypedProtocol.Core qualified as Protocol
 import Ouroboros.Consensus.Block (withOrigin)
-import Ouroboros.Consensus.Cardano (CardanoBlock ())
-import Ouroboros.Consensus.Cardano.Node (protocolClientInfoCardano)
+import Ouroboros.Consensus.Cardano qualified as Consensus
+import Ouroboros.Consensus.Cardano.Node qualified as Consensus
+import Ouroboros.Consensus.Config (emptyCheckpointsMap)
+import Ouroboros.Consensus.Mempool (mkOverrides, noOverridesMeasure)
 import Ouroboros.Consensus.Network.NodeToClient qualified as Client
+import Ouroboros.Consensus.Node (ProtocolInfo)
 import Ouroboros.Consensus.Node.ErrorPolicy (consensusErrorPolicy)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion qualified as Consensus
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..))
@@ -35,12 +49,6 @@ import Ouroboros.Network.Protocol.ChainSync.Client qualified as ChainSync
 import Ouroboros.Network.Protocol.ChainSync.Type (ChainSync (..))
 import Ouroboros.Network.Snocket (localAddressFromPath)
 import System.Exit (ExitCode ())
-
--- | A Cardano block, applied to @StandardCrypto@
-type StandardBlock = CardanoBlock StandardCrypto
-
--- | Tip of the server's chain, applied to @StandardBlock@
-type StandardTip = Block.Tip StandardBlock
 
 -- | Record of node-to-client mini protocols.
 type NodeToClientProtocols =
@@ -356,7 +364,7 @@ codecs
 codecs = Client.clientCodecs codecConfig
   where
     codecConfig = pClientInfoCodecConfig cfg
-    cfg = protocolClientInfoCardano mainnetEpochSlots
+    cfg = Consensus.protocolClientInfoCardano mainnetEpochSlots
 
 processBlock :: MonadIO m => StandardTip -> StandardBlock -> AppT m ()
 processBlock serverTip clientTip = do
@@ -383,3 +391,77 @@ processBlock serverTip clientTip = do
     getBlockNo block =
       case Block.getHeaderFields block of
         Block.HeaderFields _ blockNo' _ -> Block.unBlockNo blockNo'
+
+type ByronConfig = Config
+type ShelleyGenesisHash = Hash Blake2b_256 ByteString
+
+protocolInfo
+  :: ByronConfig
+  -> ShelleyGenesisHash
+  -> ShelleyGenesis StandardCrypto
+  -> AlonzoGenesis
+  -> ConwayGenesis StandardCrypto
+  -> ProtocolInfo StandardBlock
+protocolInfo byronCfg shelleyGenesisHash shelleyGenesis alonzoGenesis conwayGenesis =
+  fst $ Consensus.protocolInfoCardano @StandardCrypto @IO protoParams
+  where
+    protoParams :: Consensus.CardanoProtocolParams StandardCrypto
+    protoParams =
+      Consensus.CardanoProtocolParams
+        { paramsByron =
+            Consensus.ProtocolParamsByron
+              { byronGenesis = byronCfg,
+                byronPbftSignatureThreshold = Nothing,
+                byronProtocolVersion = Byron.ProtocolVersion 3 0 0,
+                byronSoftwareVersion = Byron.SoftwareVersion (Byron.ApplicationName "cardano-sl") 1,
+                byronLeaderCredentials = Nothing,
+                byronMaxTxCapacityOverrides = mkOverrides noOverridesMeasure
+              },
+          paramsShelleyBased =
+            Consensus.ProtocolParamsShelleyBased
+              { shelleyBasedInitialNonce = Nonce (castHash shelleyGenesisHash),
+                shelleyBasedLeaderCredentials = []
+              },
+          paramsShelley =
+            Consensus.ProtocolParamsShelley
+              { shelleyProtVer = ProtVer (natVersion @3) 0,
+                shelleyMaxTxCapacityOverrides = mkOverrides noOverridesMeasure
+              },
+          paramsAllegra =
+            Consensus.ProtocolParamsAllegra
+              { allegraProtVer = ProtVer (natVersion @4) 0,
+                allegraMaxTxCapacityOverrides = mkOverrides noOverridesMeasure
+              },
+          paramsMary =
+            Consensus.ProtocolParamsMary
+              { maryProtVer = ProtVer (natVersion @5) 0,
+                maryMaxTxCapacityOverrides = mkOverrides noOverridesMeasure
+              },
+          paramsAlonzo =
+            Consensus.ProtocolParamsAlonzo
+              { alonzoProtVer = ProtVer (natVersion @7) 0,
+                alonzoMaxTxCapacityOverrides = mkOverrides noOverridesMeasure
+              },
+          paramsBabbage =
+            Consensus.ProtocolParamsBabbage
+              { babbageProtVer = ProtVer (natVersion @9) 0,
+                babbageMaxTxCapacityOverrides = mkOverrides noOverridesMeasure
+              },
+          paramsConway =
+            Consensus.ProtocolParamsConway
+              { conwayProtVer = ProtVer (natVersion @10) 0,
+                conwayMaxTxCapacityOverrides = mkOverrides noOverridesMeasure
+              },
+          ledgerTransitionConfig =
+            mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis,
+          hardForkTriggers =
+            Consensus.CardanoHardForkTriggers'
+              { triggerHardForkShelley = Consensus.TriggerHardForkAtVersion 2,
+                triggerHardForkAllegra = Consensus.TriggerHardForkAtVersion 3,
+                triggerHardForkMary = Consensus.TriggerHardForkAtVersion 4,
+                triggerHardForkAlonzo = Consensus.TriggerHardForkAtVersion 5,
+                triggerHardForkBabbage = Consensus.TriggerHardForkAtVersion 7,
+                triggerHardForkConway = Consensus.TriggerHardForkAtVersion 9
+              },
+          checkpoints = emptyCheckpointsMap
+        }
