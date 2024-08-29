@@ -362,9 +362,9 @@ processBlock serverTip clientTip = do
 
   -- Apply ledger state
   ledger <- liftIO . STM.atomically $ do
-    ledgerState <- STM.readTVar ledgerStateV
-    let ledgerState' = tickThenReapply (ledgerCfg protoInfo) clientTip ledgerState
-    STM.writeTVar ledgerStateV ledgerState'
+    ledgerState <- STM.readTVar envLedgerState
+    let ledgerState' = tickThenReapply (ledgerCfg envProtocolInfo) clientTip ledgerState
+    STM.writeTVar envLedgerState ledgerState'
 
     pure ledgerState'
 
