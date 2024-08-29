@@ -60,7 +60,7 @@ library
     ouroboros-network-protocols,
     ouroboros-consensus-protocol,
     ouroboros-network,
-    stm,
+    strict-stm,
     typed-protocols
 
 executable seandexer

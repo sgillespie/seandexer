@@ -2,13 +2,14 @@
 
 module Data.Cardano.Seandexer
   ( SeandexerOpts (..),
+    LedgerEra (..),
     NetworkId (..),
     runSeandexer,
     mkTestnet,
   ) where
 
-import Data.Cardano.Seandexer.AppT
-import Data.Cardano.Seandexer.ChainSync
+import Data.Cardano.Seandexer.AppT (LedgerEra (..), StandardBlock (), mkAppEnv, runAppT)
+import Data.Cardano.Seandexer.ChainSync (SocketPath (..), subscribe)
 import Data.Cardano.Seandexer.Config (mkProtocolInfo)
 
 import Cardano.Crypto.ProtocolMagic (RequiresNetworkMagic (..))
@@ -21,6 +22,7 @@ import System.Console.Regions qualified as Console
 data SeandexerOpts = SeandexerOpts
   { soSocketPath :: FilePath,
     soNetworkId :: NetworkId,
+    soStartEra :: LedgerEra,
     soByronGenesis :: FilePath,
     soShelleyGenesis :: FilePath,
     soAlonzoGenesis :: FilePath,
@@ -37,7 +39,7 @@ runSeandexer :: SeandexerOpts -> IO ()
 runSeandexer opts@SeandexerOpts{..} = Console.displayConsoleRegions $ do
   Console.withConsoleRegion Console.Linear $ \region -> do
     protoInfo <- protoInfoFromOpts opts
-    env <- mkAppEnv protoInfo region
+    env <- mkAppEnv protoInfo soStartEra region
 
     runAppT env . void $
       subscribe (networkMagic soNetworkId) (SocketPath soSocketPath)
@@ -46,6 +48,7 @@ protoInfoFromOpts :: SeandexerOpts -> IO (ProtocolInfo StandardBlock)
 protoInfoFromOpts SeandexerOpts{..} =
   mkProtocolInfo
     (requiresNetworkMagic soNetworkId)
+    soStartEra
     soByronGenesis
     soShelleyGenesis
     soAlonzoGenesis

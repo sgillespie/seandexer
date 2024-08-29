@@ -9,7 +9,7 @@ module Data.Cardano.Seandexer.Config
     protocolInfo,
   ) where
 
-import Data.Cardano.Seandexer.AppT (StandardBlock ())
+import Data.Cardano.Seandexer.AppT (LedgerEra (..), StandardBlock ())
 
 import Cardano.Chain.Genesis qualified as Byron
 import Cardano.Chain.Update qualified as Byron
@@ -18,7 +18,7 @@ import Cardano.Crypto.Hash.Class (castHash)
 import Cardano.Crypto.ProtocolMagic (RequiresNetworkMagic)
 import Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis ())
 import Cardano.Ledger.Api.Transition (mkLatestTransitionConfig)
-import Cardano.Ledger.BaseTypes (Nonce (..), ProtVer (..), natVersion)
+import Cardano.Ledger.BaseTypes (EpochNo (..), Nonce (..), ProtVer (..), natVersion)
 import Cardano.Ledger.Conway.Genesis (ConwayGenesis ())
 import Cardano.Ledger.Crypto (StandardCrypto ())
 import Cardano.Ledger.Shelley.Genesis (ShelleyGenesis ())
@@ -42,13 +42,14 @@ type ConwayGenesisFile = FilePath
 
 mkProtocolInfo
   :: RequiresNetworkMagic
+  -> LedgerEra
   -> ByronGenesisFile
   -> ShelleyGenesisFile
   -> AlonzoGenesisFile
   -> ConwayGenesisFile
   -> IO (ProtocolInfo StandardBlock)
-mkProtocolInfo requiresMagic byronGenesis shelleyGenesis alonzoGenesis conwayGenesis =
-  protocolInfo
+mkProtocolInfo requiresMagic startEra byronGenesis shelleyGenesis alonzoGenesis conwayGenesis =
+  protocolInfo startEra
     <$> readByronGenesis
     <*> readGenesisHash shelleyGenesis
     <*> decodeFileStrictIO shelleyGenesis
@@ -74,13 +75,14 @@ mkProtocolInfo requiresMagic byronGenesis shelleyGenesis alonzoGenesis conwayGen
     liftEitherT act = either (error . show) pure =<< runExceptT act
 
 protocolInfo
-  :: ByronConfig
+  :: LedgerEra
+  -> ByronConfig
   -> ShelleyGenesisHash
   -> ShelleyGenesis StandardCrypto
   -> AlonzoGenesis
   -> ConwayGenesis StandardCrypto
   -> ProtocolInfo StandardBlock
-protocolInfo byronCfg shelleyGenesisHash shelleyGenesis alonzoGenesis conwayGenesis =
+protocolInfo startEra byronCfg shelleyGenesisHash shelleyGenesis alonzoGenesis conwayGenesis =
   fst $ Consensus.protocolInfoCardano @StandardCrypto @IO protoParams
   where
     protoParams :: Consensus.CardanoProtocolParams StandardCrypto
@@ -134,12 +136,25 @@ protocolInfo byronCfg shelleyGenesisHash shelleyGenesis alonzoGenesis conwayGene
             mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis,
           hardForkTriggers =
             Consensus.CardanoHardForkTriggers'
-              { triggerHardForkShelley = Consensus.TriggerHardForkAtVersion 2,
-                triggerHardForkAllegra = Consensus.TriggerHardForkAtVersion 3,
-                triggerHardForkMary = Consensus.TriggerHardForkAtVersion 4,
-                triggerHardForkAlonzo = Consensus.TriggerHardForkAtVersion 5,
-                triggerHardForkBabbage = Consensus.TriggerHardForkAtVersion 7,
-                triggerHardForkConway = Consensus.TriggerHardForkAtVersion 9
+              { triggerHardForkShelley = triggerHardFork Shelley startEra,
+                triggerHardForkAllegra = triggerHardFork Allegra startEra,
+                triggerHardForkMary = triggerHardFork Mary startEra,
+                triggerHardForkAlonzo = triggerHardFork Alonzo startEra,
+                triggerHardForkBabbage = triggerHardFork Babbage startEra,
+                triggerHardForkConway = triggerHardFork Conway startEra
               },
           checkpoints = emptyCheckpointsMap
         }
+
+triggerHardFork :: LedgerEra -> LedgerEra -> Consensus.TriggerHardFork
+triggerHardFork hfEra start
+  | hfEra <= start = Consensus.TriggerHardForkAtEpoch (EpochNo 0)
+  | otherwise = triggerHardFork' hfEra
+  where
+    triggerHardFork' Byron = error "Should not happen!"
+    triggerHardFork' Shelley = Consensus.TriggerHardForkAtVersion 2
+    triggerHardFork' Allegra = Consensus.TriggerHardForkAtVersion 3
+    triggerHardFork' Mary = Consensus.TriggerHardForkAtVersion 4
+    triggerHardFork' Alonzo = Consensus.TriggerHardForkAtVersion 5
+    triggerHardFork' Babbage = Consensus.TriggerHardForkAtVersion 7
+    triggerHardFork' Conway = Consensus.TriggerHardForkAtVersion 9

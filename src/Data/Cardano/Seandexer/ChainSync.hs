@@ -1,4 +1,5 @@
 {-# LANGUAGE QuantifiedConstraints #-}
+{-# OPTIONS_GHC -Wno-deferred-out-of-scope-variables #-}
 
 module Data.Cardano.Seandexer.ChainSync
   ( NodeToClientProtocols (),
@@ -11,15 +12,19 @@ import Data.Cardano.Seandexer.AppT
 
 import Cardano.Chain.Epoch.File (mainnetEpochSlots)
 import Cardano.Client.Subscription qualified as Subscription
+import Control.Concurrent.Class.MonadSTM.Strict qualified as STM
 import Control.Tracer (Tracer (..), contramapM, nullTracer)
 import Network.TypedProtocol.Codec (Codec ())
 import Network.TypedProtocol.Core qualified as Protocol
-import Ouroboros.Consensus.Block (withOrigin)
+import Ouroboros.Consensus.Block (BlockNo (..), withOrigin, withOriginToMaybe)
 import Ouroboros.Consensus.Cardano.Node qualified as Consensus
+import Ouroboros.Consensus.HeaderValidation (AnnTip (..), HeaderState (..))
+import Ouroboros.Consensus.Ledger.Abstract (tickThenApply, tickThenReapply)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerCfg (..), ExtLedgerState (..))
 import Ouroboros.Consensus.Network.NodeToClient qualified as Client
 import Ouroboros.Consensus.Node.ErrorPolicy (consensusErrorPolicy)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion qualified as Consensus
-import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..))
+import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..), ProtocolInfo (..))
 import Ouroboros.Consensus.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Util (ShowProxy ())
@@ -350,14 +355,24 @@ codecs = Client.clientCodecs codecConfig
 
 processBlock :: MonadIO m => StandardTip -> StandardBlock -> AppT m ()
 processBlock serverTip clientTip = do
-  trace' <- asks (runTracer . envStdOutTracer)
-  progress <- asks (runTracer . envProgressTracer)
+  AppEnv{..} <- ask
+
+  let trace' = liftIO . runTracer envStdOutTracer
+      progress' = liftIO . runTracer envProgressTracer
+
+  -- Apply ledger state
+  ledger <- liftIO . STM.atomically $ do
+    ledgerState <- STM.readTVar ledgerStateV
+    let ledgerState' = tickThenReapply (ledgerCfg protoInfo) clientTip ledgerState
+    STM.writeTVar ledgerStateV ledgerState'
+
+    pure ledgerState'
 
   let blockNo' = getBlockNo clientTip
       tip' = withOrigin 0 Block.unBlockNo (Block.getTipBlockNo serverTip)
 
-  when (blockNo' `mod` 10000 == 0) $
-    liftIO . progress $
+  when (blockNo' `mod` 1000 == 0) $ do
+    progress' $
       "Progress: "
         <> show (blockNo' * 100 `div` tip')
         <> "% (block "
@@ -367,9 +382,18 @@ processBlock serverTip clientTip = do
         <> ")"
 
   when (blockNo' >= tip') $ do
-    liftIO . trace' $ "Reached final block: " <> show blockNo'
+    trace' $ "Reached final ledger state at block: " <> show (getLedgerTip ledger)
     exitSuccess
   where
     getBlockNo block =
       case Block.getHeaderFields block of
         Block.HeaderFields _ blockNo' _ -> Block.unBlockNo blockNo'
+
+    ledgerCfg protoInfo = ExtLedgerCfg (pInfoConfig protoInfo)
+
+getLedgerTip :: StandardLedgerState -> Maybe Word64
+getLedgerTip (ExtLedgerState _ header) =
+  let (HeaderState tip _) = header
+      tip' = withOriginToMaybe tip
+      blockNo' = unBlockNo . annTipBlockNo <$> tip'
+  in blockNo'

@@ -7,6 +7,7 @@ import Options.Applicative
 data Opts = Opts
   { socketPath :: FilePath,
     networkId :: NetworkId,
+    startEra :: LedgerEra,
     byronGenesis :: FilePath,
     shelleyGenesis :: FilePath,
     alonzoGenesis :: FilePath,
@@ -29,7 +30,8 @@ run = runSeandexer . toSeandexerOpts
           soByronGenesis = byronGenesis,
           soShelleyGenesis = shelleyGenesis,
           soAlonzoGenesis = alonzoGenesis,
-          soConwayGenesis = conwayGenesis
+          soConwayGenesis = conwayGenesis,
+          soStartEra = startEra
         }
 
 parseOpts :: Parser Opts
@@ -37,6 +39,7 @@ parseOpts =
   Opts
     <$> parseSocketPath
     <*> parseNetworkId
+    <*> parseStartEra
     <*> parseByronGenesis
     <*> parseShelleyGenesis
     <*> parseAlonzoGenesis
@@ -64,6 +67,23 @@ parseNetworkId = parseMainnet <|> (mkTestnet <$> parseTestnetMagic)
         long "testnet-magic"
           <> short 't'
           <> help "Use the specified testnet magic ID"
+
+parseStartEra :: Parser LedgerEra
+parseStartEra =
+  option (maybeReader read) $
+    long "era"
+      <> short 'e'
+      <> metavar "ERA"
+      <> help "The starting ledger era"
+      <> value Byron
+  where
+    read "byron" = Just Byron
+    read "shelley" = Just Shelley
+    read "allegra" = Just Allegra
+    read "alonzo" = Just Alonzo
+    read "babbage" = Just Babbage
+    read "conway" = Just Conway
+    read _ = Nothing
 
 parseByronGenesis :: Parser FilePath
 parseByronGenesis =
