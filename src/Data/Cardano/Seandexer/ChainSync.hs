@@ -12,19 +12,15 @@ import Data.Cardano.Seandexer.AppT
 
 import Cardano.Chain.Epoch.File (mainnetEpochSlots)
 import Cardano.Client.Subscription qualified as Subscription
-import Control.Concurrent.Class.MonadSTM.Strict qualified as STM
+import Control.Monad.Cont (ContT (..))
 import Control.Tracer (Tracer (..), contramapM, nullTracer)
 import Network.TypedProtocol.Codec (Codec ())
 import Network.TypedProtocol.Core qualified as Protocol
-import Ouroboros.Consensus.Block (BlockNo (..), withOrigin, withOriginToMaybe)
 import Ouroboros.Consensus.Cardano.Node qualified as Consensus
-import Ouroboros.Consensus.HeaderValidation (AnnTip (..), HeaderState (..))
-import Ouroboros.Consensus.Ledger.Abstract (tickThenApply, tickThenReapply)
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerCfg (..), ExtLedgerState (..))
 import Ouroboros.Consensus.Network.NodeToClient qualified as Client
 import Ouroboros.Consensus.Node.ErrorPolicy (consensusErrorPolicy)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion qualified as Consensus
-import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..), ProtocolInfo (..))
+import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..))
 import Ouroboros.Consensus.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Util (ShowProxy ())
@@ -63,21 +59,21 @@ newtype SocketPath = SocketPath {unSocketPath :: FilePath}
 
 -- | Subscribe to a Cardano node with the `node-to-client` mini-protocol.
 subscribe
-  :: MonadIO io
-  => NetworkMagic
+  :: NetworkMagic
   -> SocketPath
-  -> AppT io Void
-subscribe networkMagic (SocketPath socketPath) = do
-  env <- ask
+  -> ContT () (AppT IO) ChainSyncHook
+subscribe networkMagic (SocketPath socketPath) =
+  ContT $ \next -> do
+    env <- ask
 
-  liftIO . Network.withIOManager $ \ioManager ->
-    Subscription.subscribe
-      (Network.localSnocket ioManager)
-      networkMagic
-      nodeToClientVersions
-      (tracers env)
-      (subscriptionParams socketPath)
-      (protocols env)
+    void . liftIO . Network.withIOManager $ \ioManager ->
+      Subscription.subscribe
+        (Network.localSnocket ioManager)
+        networkMagic
+        nodeToClientVersions
+        (tracers env)
+        (subscriptionParams socketPath)
+        (protocols next env)
 
 nodeToClientVersions
   :: Map
@@ -116,45 +112,50 @@ subscriptionParams socketPath =
     }
 
 protocols
-  :: AppEnv
+  :: (ChainSyncHook -> AppT IO ())
+  -> AppEnv
   -> Consensus.NodeToClientVersion
   -> Consensus.BlockNodeToClientVersion StandardBlock
   -> NodeToClientProtocols () Void
-protocols env clientVersion blockVersion =
+protocols next env clientVersion blockVersion =
   Network.NodeToClientProtocols
-    { localChainSyncProtocol = localChainSyncProtocol' env blockVersion clientVersion,
+    { localChainSyncProtocol =
+        localChainSyncProtocol' next env blockVersion clientVersion,
       localTxSubmissionProtocol = localTxSubmissionProtocol' blockVersion clientVersion,
       localStateQueryProtocol = localStateQueryProtocol' blockVersion clientVersion,
       localTxMonitorProtocol = localTxMonitorProtocol' blockVersion clientVersion
     }
 
 localChainSyncProtocol'
-  :: AppEnv
+  :: (ChainSyncHook -> AppT IO ())
+  -> AppEnv
   -> Consensus.BlockNodeToClientVersion StandardBlock
   -> Consensus.NodeToClientVersion
   -> RunMiniProtocolWithMinimalCtx () Void
-localChainSyncProtocol' env blockVersion clientVersion =
+localChainSyncProtocol' next env blockVersion clientVersion =
   mkInitiatorProtocolOnly codec peer
   where
     codec = Client.cChainSyncCodec (codecs blockVersion clientVersion)
-    peer = mkChainSyncPeer env
+    peer = mkChainSyncPeer next env
 
 mkChainSyncPeer
   :: (MonadIO m, Monad m)
-  => AppEnv
+  => (ChainSyncHook -> AppT m ())
+  -> AppEnv
   -> Protocol.Peer
       (ChainSync StandardBlock (Block.Point StandardBlock) (Block.Tip StandardBlock))
       'Protocol.AsClient
       StIdle
       m
       ()
-mkChainSyncPeer env =
+mkChainSyncPeer next env =
   ChainSync.chainSyncClientPeer $
-    ChainSync.ChainSyncClient (mkChainSyncClient env)
+    ChainSync.ChainSyncClient (mkChainSyncClient next env)
 
 mkChainSyncClient
   :: (MonadIO m, Monad m)
-  => AppEnv
+  => (ChainSyncHook -> AppT m ())
+  -> AppEnv
   -> m
       ( ChainSync.ClientStIdle
           StandardBlock
@@ -163,27 +164,29 @@ mkChainSyncClient
           m
           ()
       )
-mkChainSyncClient env =
-  pure $ ChainSync.SendMsgFindIntersect [Block.genesisPoint] (mkFindIntersectClient env)
+mkChainSyncClient next env =
+  pure $
+    ChainSync.SendMsgFindIntersect [Block.genesisPoint] (mkFindIntersectClient next env)
 
 mkFindIntersectClient
-  :: (MonadIO m, Monad m)
-  => AppEnv
+  :: forall m
+   . MonadIO m
+  => (ChainSyncHook -> AppT m ())
+  -> AppEnv
   -> ChainSync.ClientStIntersect
       StandardBlock
       (Block.Point StandardBlock)
       (Block.Tip StandardBlock)
       m
       ()
-mkFindIntersectClient env =
+mkFindIntersectClient next env =
   ChainSync.ClientStIntersect
     { recvMsgIntersectFound = intersectFound,
       recvMsgIntersectNotFound = intersectNotFound
     }
   where
     intersectFound
-      :: MonadIO m
-      => Block.Point StandardBlock
+      :: Block.Point StandardBlock
       -> Block.Tip StandardBlock
       -> ChainSync.ChainSyncClient
           StandardBlock
@@ -195,8 +198,7 @@ mkFindIntersectClient env =
       ChainSync.ChainSyncClient $ mkRequestNextClient (Just point) tip
 
     intersectNotFound
-      :: MonadIO m
-      => Block.Tip StandardBlock
+      :: Block.Tip StandardBlock
       -> ChainSync.ChainSyncClient
           StandardBlock
           (Block.Point StandardBlock)
@@ -206,8 +208,7 @@ mkFindIntersectClient env =
     intersectNotFound serverTip = ChainSync.ChainSyncClient (mkRequestNextClient Nothing serverTip)
 
     mkRequestNextClient
-      :: MonadIO m
-      => Maybe (Block.Point StandardBlock)
+      :: Maybe (Block.Point StandardBlock)
       -> Block.Tip StandardBlock
       -> m
           ( ChainSync.ClientStIdle
@@ -227,26 +228,27 @@ mkFindIntersectClient env =
         Nothing ->
           trace' $ "No intersection found at tip: " <> show tip'
 
-      pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext env)
+      pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext next env)
 
 mkClientStNext
-  :: MonadIO m
-  => AppEnv
+  :: forall m
+   . MonadIO m
+  => (ChainSyncHook -> AppT m ())
+  -> AppEnv
   -> ChainSync.ClientStNext
       StandardBlock
       (Block.Point StandardBlock)
       (Block.Tip StandardBlock)
       m
       ()
-mkClientStNext env =
+mkClientStNext next env =
   ChainSync.ClientStNext
     { recvMsgRollForward = rollForward,
       recvMsgRollBackward = rollBackward
     }
   where
     rollForward
-      :: MonadIO m
-      => StandardBlock
+      :: StandardBlock
       -> Block.Tip StandardBlock
       -> ChainSync.ChainSyncClient
           StandardBlock
@@ -258,8 +260,7 @@ mkClientStNext env =
       ChainSync.ChainSyncClient $ mkRequestNextClient (Left clientTip) serverTip
 
     rollBackward
-      :: MonadIO m
-      => Block.Point StandardBlock
+      :: Block.Point StandardBlock
       -> Block.Tip StandardBlock
       -> ChainSync.ChainSyncClient
           StandardBlock
@@ -271,8 +272,7 @@ mkClientStNext env =
       ChainSync.ChainSyncClient $ mkRequestNextClient (Right clientPoint) serverTip
 
     mkRequestNextClient
-      :: MonadIO m
-      => Either StandardBlock (Block.Point StandardBlock)
+      :: Either StandardBlock (Block.Point StandardBlock)
       -> Block.Tip StandardBlock
       -> m
           ( ChainSync.ClientStIdle
@@ -285,18 +285,11 @@ mkClientStNext env =
     mkRequestNextClient clientTip serverTip =
       case clientTip of
         Left block -> do
-          runAppT env $ processBlock serverTip block
-
-          pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext env)
+          runAppT env (next $ RollForward serverTip block)
+          pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext next env)
         Right point -> do
-          reportRollback point
-          pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext env)
-      where
-        tip' = withOrigin 0 Block.unBlockNo (Block.getTipBlockNo serverTip)
-        trace' = liftIO . runTracer (envStdOutTracer env)
-
-        reportRollback point =
-          trace' $ "Rolling backward at point: " <> show point <> ", tip: " <> show tip'
+          runAppT env (next $ RollBackward serverTip point)
+          pure $ ChainSync.SendMsgRequestNext (pure ()) (mkClientStNext next env)
 
 localTxSubmissionProtocol'
   :: Consensus.BlockNodeToClientVersion StandardBlock
@@ -352,48 +345,3 @@ codecs = Client.clientCodecs codecConfig
   where
     codecConfig = pClientInfoCodecConfig cfg
     cfg = Consensus.protocolClientInfoCardano mainnetEpochSlots
-
-processBlock :: MonadIO m => StandardTip -> StandardBlock -> AppT m ()
-processBlock serverTip clientTip = do
-  AppEnv{..} <- ask
-
-  let trace' = liftIO . runTracer envStdOutTracer
-      progress' = liftIO . runTracer envProgressTracer
-
-  -- Apply ledger state
-  ledger <- liftIO . STM.atomically $ do
-    ledgerState <- STM.readTVar envLedgerState
-    let ledgerState' = tickThenReapply (ledgerCfg envProtocolInfo) clientTip ledgerState
-    STM.writeTVar envLedgerState ledgerState'
-
-    pure ledgerState'
-
-  let blockNo' = getBlockNo clientTip
-      tip' = withOrigin 0 Block.unBlockNo (Block.getTipBlockNo serverTip)
-
-  when (blockNo' `mod` 1000 == 0) $ do
-    progress' $
-      "Progress: "
-        <> show (blockNo' * 100 `div` tip')
-        <> "% (block "
-        <> show blockNo'
-        <> " / "
-        <> show tip'
-        <> ")"
-
-  when (blockNo' >= tip') $ do
-    trace' $ "Reached final ledger state at block: " <> show (getLedgerTip ledger)
-    exitSuccess
-  where
-    getBlockNo block =
-      case Block.getHeaderFields block of
-        Block.HeaderFields _ blockNo' _ -> Block.unBlockNo blockNo'
-
-    ledgerCfg protoInfo = ExtLedgerCfg (pInfoConfig protoInfo)
-
-getLedgerTip :: StandardLedgerState -> Maybe Word64
-getLedgerTip (ExtLedgerState _ header) =
-  let (HeaderState tip _) = header
-      tip' = withOriginToMaybe tip
-      blockNo' = unBlockNo . annTipBlockNo <$> tip'
-  in blockNo'

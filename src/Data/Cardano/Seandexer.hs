@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 
 module Data.Cardano.Seandexer
@@ -8,7 +9,8 @@ module Data.Cardano.Seandexer
     mkTestnet,
   ) where
 
-import Data.Cardano.Seandexer.AppT (LedgerEra (..), StandardBlock (), mkAppEnv, runAppT)
+import Data.Cardano.Seandexer.AppT
+import Data.Cardano.Seandexer.Block (applyBlock, rollBackward)
 import Data.Cardano.Seandexer.ChainSync (SocketPath (..), subscribe)
 import Data.Cardano.Seandexer.Config (mkProtocolInfo)
 
@@ -41,7 +43,11 @@ runSeandexer opts@SeandexerOpts{..} = Console.displayConsoleRegions $ do
     protoInfo <- protoInfoFromOpts opts
     env <- mkAppEnv protoInfo soStartEra region
 
-    runAppT env . void $
+    let next = \case
+          RollForward tip block -> applyBlock tip block
+          RollBackward tip point -> rollBackward tip point
+
+    runContAppT next env $
       subscribe (networkMagic soNetworkId) (SocketPath soSocketPath)
 
 protoInfoFromOpts :: SeandexerOpts -> IO (ProtocolInfo StandardBlock)

@@ -33,6 +33,7 @@ library
   exposed-modules:
     Data.Cardano.Seandexer
     Data.Cardano.Seandexer.AppT
+    Data.Cardano.Seandexer.Block
     Data.Cardano.Seandexer.ChainSync
     Data.Cardano.Seandexer.Config
   hs-source-dirs: src

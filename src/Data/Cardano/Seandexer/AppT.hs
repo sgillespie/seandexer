@@ -1,20 +1,23 @@
 module Data.Cardano.Seandexer.AppT
   ( AppT (..),
     AppEnv (..),
+    ChainSyncHook (..),
     LedgerEra (..),
     StandardBlock (),
     StandardTip (),
     StandardLedgerState (),
     mkAppEnv,
     runAppT,
+    runContAppT,
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict qualified as STM
+import Control.Monad.Cont (ContT (..), runContT)
 import Control.Tracer (Tracer (..))
 import Ouroboros.Consensus.Cardano.Block (CardanoBlock (), StandardCrypto ())
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
-import Ouroboros.Network.Block (Tip ())
+import Ouroboros.Network.Block (Point, Tip ())
 import System.Console.Concurrent (outputConcurrent)
 import System.Console.Regions (ConsoleRegion ())
 import System.Console.Regions qualified as Console
@@ -36,6 +39,10 @@ data AppEnv = AppEnv
     envProtocolInfo :: ProtocolInfo StandardBlock,
     envStartEra :: LedgerEra
   }
+
+data ChainSyncHook
+  = RollForward StandardTip StandardBlock
+  | RollBackward StandardTip (Point StandardBlock)
 
 data LedgerEra
   = Byron
@@ -83,4 +90,9 @@ outputConcurrentTracer =
   Tracer $ outputConcurrent . (<> "\n")
 
 runAppT :: AppEnv -> AppT m a -> m a
-runAppT env action = runReaderT (unAppT action) env
+runAppT env action =
+  runReaderT (unAppT action) env
+
+runContAppT :: (a -> AppT m r) -> AppEnv -> ContT r (AppT m) a -> m r
+runContAppT next env action =
+  runAppT env (runContT action next)
