@@ -39,7 +39,7 @@
                     fourmolu = {};
 
                     haskell-language-server = {
-                      src = inputs.haskellNix.inputs."hls-2.8";
+                      src = inputs.haskellNix.inputs."hls-2.9";
                     };
                   };
 

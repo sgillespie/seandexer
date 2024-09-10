@@ -13,7 +13,20 @@ repository cardano-haskell-packages
       d4a35cd3121aa00d18544bb0ac01c3e1691d618f462c46129271bccf39f7e8ee
 
 index-state:
-   hackage.haskell.org 2024-08-21T15:58:15Z,
-   cardano-haskell-packages 2024-08-20T20:15:45Z
+    hackage.haskell.org 2024-08-21T15:58:15Z,
+    cardano-haskell-packages 2024-08-20T20:15:45Z
 
 test-show-details: streaming
+
+source-repository-package
+    type: git
+    location: https://github.com/sgillespie/cardano-ledger
+    tag: 474e44219983020507c7e3fe586f7c0ad779d745
+    --sha256: sha256-CDfIgbOJckEbE05G2cs0Q+fkzTZ2P2BbCOxZxbBTwhY=
+    subdir:
+      libs/cardano-ledger-core
+      eras/alonzo/impl
+      eras/babbage/impl
+      eras/conway/impl
+      eras/mary/impl
+      eras/shelley/impl
