@@ -93,6 +93,6 @@ runAppT :: AppEnv -> AppT m a -> m a
 runAppT env action =
   runReaderT (unAppT action) env
 
-runContAppT :: (a -> AppT m r) -> AppEnv -> ContT r (AppT m) a -> m r
-runContAppT next env action =
-  runAppT env (runContT action next)
+runContAppT :: AppEnv -> ContT r (AppT m) Void -> m r
+runContAppT env action =
+  runAppT env (runContT action absurd)

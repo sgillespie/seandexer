@@ -4,6 +4,7 @@
 module Data.Cardano.Seandexer.Block
   ( applyBlock,
     rollBackward,
+    rollForward,
   ) where
 
 import Data.Cardano.Seandexer.AppT
@@ -33,6 +34,7 @@ import Cardano.Ledger.Shelley.Tx (ShelleyTx (..), ShelleyTxRaw (..))
 import Cardano.Ledger.TxIn (TxIn ())
 import Cardano.Ledger.Val (Val ())
 import Control.Concurrent.Class.MonadSTM.Strict qualified as STM
+import Control.Monad.Cont (ContT (..))
 import Control.Tracer (Tracer (..))
 import Data.Sequence.Strict (StrictSeq)
 import Ouroboros.Consensus.Block (BlockNo (..), Point, withOrigin, withOriginToMaybe)
@@ -49,8 +51,14 @@ import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock (..))
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Network.Block qualified as Block
 
-applyBlock :: MonadIO m => StandardTip -> StandardBlock -> AppT m ()
-applyBlock serverTip clientTip = do
+applyBlock :: MonadIO m => ChainSyncHook -> ContT () (AppT m) Void
+applyBlock hook = ContT $ \_ ->
+  case hook of
+    RollForward tip block -> rollForward tip block
+    RollBackward tip block -> rollBackward tip block
+
+rollForward :: MonadIO m => StandardTip -> StandardBlock -> AppT m ()
+rollForward serverTip clientTip = do
   AppEnv{..} <- ask
 
   let trace' = liftIO . runTracer envStdOutTracer
