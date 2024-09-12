@@ -11,7 +11,8 @@ data Opts = Opts
     byronGenesis :: FilePath,
     shelleyGenesis :: FilePath,
     alonzoGenesis :: FilePath,
-    conwayGenesis :: FilePath
+    conwayGenesis :: FilePath,
+    trimBlocks :: Bool
   }
   deriving stock (Eq, Show)
 
@@ -31,7 +32,8 @@ run = runSeandexer . toSeandexerOpts
           soShelleyGenesis = shelleyGenesis,
           soAlonzoGenesis = alonzoGenesis,
           soConwayGenesis = conwayGenesis,
-          soStartEra = startEra
+          soStartEra = startEra,
+          soTrimBlocks = trimBlocks
         }
 
 parseOpts :: Parser Opts
@@ -44,6 +46,7 @@ parseOpts =
     <*> parseShelleyGenesis
     <*> parseAlonzoGenesis
     <*> parseConwayGenesis
+    <*> parseTrimBlocks
 
 parseSocketPath :: Parser FilePath
 parseSocketPath =
@@ -116,3 +119,10 @@ parseConwayGenesis =
       <> short 'c'
       <> metavar "PATH"
       <> help "Conway Genesis file path"
+
+parseTrimBlocks :: Parser Bool
+parseTrimBlocks =
+  switch $
+    long "trim"
+      <> short 't'
+      <> help "Remove unnecessary data from blocks before applying to the ledger state"

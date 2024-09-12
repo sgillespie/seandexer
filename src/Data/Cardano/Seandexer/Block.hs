@@ -63,12 +63,12 @@ rollForward serverTip clientTip = do
 
   let trace' = liftIO . runTracer envStdOutTracer
       progress' = liftIO . runTracer envProgressTracer
-      block' = trimBlock clientTip
+      block = maybeTrimBlock envTrimBlocks clientTip
 
   -- Apply ledger state
   ledger <- liftIO . STM.atomically $ do
     ledgerState <- STM.readTVar envLedgerState
-    let ledgerState' = tickThenReapply (ledgerCfg envProtocolInfo) block' ledgerState
+    let ledgerState' = tickThenReapply (ledgerCfg envProtocolInfo) block ledgerState
     STM.writeTVar envLedgerState ledgerState'
 
     pure ledgerState'
@@ -87,14 +87,7 @@ rollForward serverTip clientTip = do
         <> ")"
 
     -- Verify we have properly cleaned up
-    case ledgerState ledger of
-      LedgerStateByron _ -> pure ()
-      LedgerStateShelley _ -> pure ()
-      LedgerStateAllegra _ -> pure ()
-      LedgerStateMary maryLedger -> checkLedgerStateMary maryLedger
-      LedgerStateAlonzo alonzoLedger -> checkLedgerStateAlonzo alonzoLedger
-      LedgerStateBabbage babbageLedger -> checkLedgerStateBabbage babbageLedger
-      LedgerStateConway conwayLedger -> checkLedgerStateBabbage conwayLedger
+    maybeVerifyLedger envTrimBlocks ledger
 
   when (blockNo' >= tip') $ do
     trace' $ "Reached final ledger state at block: " <> show (getLedgerTip ledger)
@@ -105,6 +98,20 @@ rollForward serverTip clientTip = do
         Block.HeaderFields _ blockNo' _ -> Block.unBlockNo blockNo'
 
     ledgerCfg protoInfo = ExtLedgerCfg (pInfoConfig protoInfo)
+
+    maybeTrimBlock (TrimBlocks False) = id
+    maybeTrimBlock (TrimBlocks True) = trimBlock
+
+    maybeVerifyLedger (TrimBlocks False) _ = pure ()
+    maybeVerifyLedger (TrimBlocks True) ledger =
+      case ledgerState ledger of
+        LedgerStateByron _ -> pure ()
+        LedgerStateShelley _ -> pure ()
+        LedgerStateAllegra _ -> pure ()
+        LedgerStateMary maryLedger -> checkLedgerStateMary maryLedger
+        LedgerStateAlonzo alonzoLedger -> checkLedgerStateAlonzo alonzoLedger
+        LedgerStateBabbage babbageLedger -> checkLedgerStateBabbage babbageLedger
+        LedgerStateConway conwayLedger -> checkLedgerStateBabbage conwayLedger
 
 getLedgerTip :: StandardLedgerState -> Maybe Word64
 getLedgerTip (ExtLedgerState _ header) =

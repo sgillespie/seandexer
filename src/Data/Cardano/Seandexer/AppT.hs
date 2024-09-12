@@ -2,6 +2,7 @@ module Data.Cardano.Seandexer.AppT
   ( AppT (..),
     AppEnv (..),
     ChainSyncHook (..),
+    TrimBlocks (..),
     LedgerEra (..),
     StandardBlock (),
     StandardTip (),
@@ -37,8 +38,12 @@ data AppEnv = AppEnv
     envStdOutTracer :: Tracer IO Text,
     envLedgerState :: STM.StrictTVar IO StandardLedgerState,
     envProtocolInfo :: ProtocolInfo StandardBlock,
-    envStartEra :: LedgerEra
+    envStartEra :: LedgerEra,
+    envTrimBlocks :: TrimBlocks
   }
+
+newtype TrimBlocks = TrimBlocks {unTrimBlocks :: Bool}
+  deriving newtype (Eq, Show)
 
 data ChainSyncHook
   = RollForward StandardTip StandardBlock
@@ -66,9 +71,10 @@ type StandardLedgerState = ExtLedgerState StandardBlock
 mkAppEnv
   :: ProtocolInfo StandardBlock
   -> LedgerEra
+  -> TrimBlocks
   -> ConsoleRegion
   -> IO AppEnv
-mkAppEnv protoInfo era region = do
+mkAppEnv protoInfo era shouldTrim region = do
   progressTracer <- consoleRegionTracer region
   ledgerState <- STM.newTVarIO (pInfoInitLedger protoInfo)
 
@@ -78,7 +84,8 @@ mkAppEnv protoInfo era region = do
         envStdOutTracer = outputConcurrentTracer,
         envLedgerState = ledgerState,
         envProtocolInfo = protoInfo,
-        envStartEra = era
+        envStartEra = era,
+        envTrimBlocks = shouldTrim
       }
 
 consoleRegionTracer :: ConsoleRegion -> IO (Tracer IO Text)

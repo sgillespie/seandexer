@@ -9,7 +9,7 @@ module Data.Cardano.Seandexer
   ) where
 
 import Data.Cardano.Seandexer.AppT
-import Data.Cardano.Seandexer.Block (applyBlock, rollBackward)
+import Data.Cardano.Seandexer.Block (applyBlock)
 import Data.Cardano.Seandexer.ChainSync (SocketPath (..), subscribe)
 import Data.Cardano.Seandexer.Config (mkProtocolInfo)
 
@@ -27,7 +27,8 @@ data SeandexerOpts = SeandexerOpts
     soByronGenesis :: FilePath,
     soShelleyGenesis :: FilePath,
     soAlonzoGenesis :: FilePath,
-    soConwayGenesis :: FilePath
+    soConwayGenesis :: FilePath,
+    soTrimBlocks :: Bool
   }
   deriving stock (Eq, Show)
 
@@ -40,7 +41,7 @@ runSeandexer :: SeandexerOpts -> IO ()
 runSeandexer opts@SeandexerOpts{..} = Console.displayConsoleRegions $ do
   Console.withConsoleRegion Console.Linear $ \region -> do
     protoInfo <- protoInfoFromOpts opts
-    env <- mkAppEnv protoInfo soStartEra region
+    env <- mkAppEnv protoInfo soStartEra (TrimBlocks soTrimBlocks) region
 
     runContAppT env $ do
       sub <- subscribe (networkMagic soNetworkId) (SocketPath soSocketPath)

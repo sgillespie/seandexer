@@ -46,6 +46,7 @@
                   # Non-haskell tools
                   buildInputs = with pkgs; [
                     nixpkgs-fmt
+                    time
                     treefmt
                   ];
                 };
